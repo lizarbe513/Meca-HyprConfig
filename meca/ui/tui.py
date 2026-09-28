@@ -1,7 +1,7 @@
 """
-Motor de Interfaz TUI Monolítica para Meca HyprConfig.
-Cero dependencias externas: utiliza modo terminal ANSI nativo con soporte TrueColor
-reactivo a los temas de Omarchy.
+Motor TUI Monolítico Minimalista para Meca HyprConfig.
+Estructura estilo HyprMod (sidebar categorizada) con diseño sobrio y cuadrado
+inspirado en los widgets nativos de Omarchy.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import termios
 import select
 import shutil
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from meca.core.theme_engine import ThemeEngine
@@ -20,14 +21,54 @@ from meca.core.config_sync import ConfigSync
 from meca.core.lizarbe_manager import LizarbeManager
 
 
+class SectionItem:
+    def __init__(
+        self,
+        key: str,
+        name: str,
+        desc: str,
+        item_type: str,  # 'stepper', 'toggle', 'select', 'slider', 'action'
+        min_val: float = 0,
+        max_val: float = 100,
+        step: float = 1,
+        options: Optional[List[str]] = None,
+        category: str = "LOOK & FEEL",
+    ):
+        self.key = key
+        self.name = name
+        self.desc = desc
+        self.item_type = item_type
+        self.min_val = min_val
+        self.max_val = max_val
+        self.step = step
+        self.options = options or []
+        self.category = category
+
+
 class MecaTUI:
-    TABS = [
-        ("1", "🖥️ Pantallas"),
-        ("2", "🎨 Apariencia & Temas"),
-        ("3", "⚡ Animaciones"),
-        ("4", "⌨️ Teclado & Bloq Mayús"),
-        ("5", "🖱️ Ratón & Gestos"),
-        ("6", "🛡️ Setup Lizarbe"),
+    # Categorías y Secciones estilo HyprMod / GNOME
+    SECTIONS = [
+        # LOOK & FEEL
+        ("LOOK & FEEL", "general", "", "General", "Gaps, bordes, layout y snap"),
+        ("LOOK & FEEL", "decoration", "", "Decoration", "Rounding, blur, opacidad y sombras"),
+        ("LOOK & FEEL", "animations", "", "Animations", "Velocidad y transiciones de ventanas"),
+        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Hardware cursor y comportamiento"),
+
+        # INPUT
+        ("INPUT", "keybinds", "", "Keybinds", "Atajos y corrección de Bloq Mayús"),
+        ("INPUT", "devices", "󰍽", "Devices", "Sensibilidad, aceleración y touchpad"),
+
+        # DISPLAY
+        ("DISPLAY", "monitors", "󰍹", "Monitors", "Resolución, Hz y escala HiDPI"),
+        ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Espacios de trabajo y reglas"),
+
+        # WINDOW MANAGEMENT
+        ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Dwindle y Master tiling options"),
+        ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Reglas flotantes y transparencias"),
+
+        # STARTUP & EXTRAS
+        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Programas de inicio automático"),
+        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy & Lizarbe", "Temas, Fastfetch y actualización"),
     ]
 
     def __init__(self):
@@ -37,30 +78,109 @@ class MecaTUI:
         self.monitors = HyprIPC.get_monitors()
         self.available_themes = self.theme_engine.list_available_themes()
 
-        self.current_tab_idx = 1  # 0: Displays, 1: Apariencia, etc.
+        self.current_section_idx = 0
+        self.active_pane = "sidebar"  # 'sidebar' o 'content'
         self.selected_item_idx = 0
-        self.status_message = "Listo. Usa Tab / 1-6 para navegar, Flechas para cambiar valores, Enter o 's' para guardar."
-        self.status_time = time.time()
+        self.content_scroll_offset = 0
+
+        self.status_message = "Listo. [Tab] cambiar foco | [↑/↓] navegar | [←/→] ajustar | [s] guardar | [q] salir"
         self.running = True
         self.orig_termios = None
 
-        # Estado específico de pestañas
-        self.selected_theme_idx = 0
-        if self.theme_engine.current_theme in self.available_themes:
-            self.selected_theme_idx = self.available_themes.index(self.theme_engine.current_theme)
+        # Escalas soportadas para monitores
+        self.scales = ["1x", "1.25x", "1.5x", "1.75x", "2x"]
+        self.scale_values = [1.0, 1.25, 1.5, 1.75, 2.0]
 
-        self.selected_monitor_idx = 0
-        self.mon_scale_idx = 0  # 1.0, 1.25, 1.5, 2.0
-        self.scales = [1.0, 1.25, 1.5, 1.75, 2.0]
+        # Inicializar definiciones de variables por sección
+        self.section_items = self._init_section_items()
 
-    def set_status(self, msg: str) -> None:
-        self.status_message = msg
-        self.status_time = time.time()
+    def _init_section_items(self) -> Dict[str, List[SectionItem]]:
+        themes = self.available_themes if self.available_themes else ["Rose Pine", "Lizarbe"]
+
+        return {
+            "general": [
+                SectionItem("general:gaps_in", "Inner gaps", "Separación entre ventanas en píxeles (gaps_in)", "stepper", 0, 30, 1),
+                SectionItem("general:gaps_out", "Outer gaps", "Separación respecto a los bordes de la pantalla (gaps_out)", "stepper", 0, 50, 1),
+                SectionItem("general:border_size", "Border size", "Grosor de la línea del borde de ventanas en píxeles", "stepper", 0, 10, 1),
+                SectionItem("general:resize_on_border", "Resize on border", "Permite redimensionar haciendo clic y arrastre en bordes", "toggle"),
+                SectionItem("general:layout", "Layout", "Gestor de mosaico principal (dwindle / master / scrolling)", "select", options=["dwindle", "master", "scrolling"]),
+                SectionItem("general:allow_tearing", "Allow tearing", "Permite screen tearing para menor latencia en juegos", "toggle"),
+                SectionItem("general:snap:enabled", "Enable snap", "Ajuste magnético automático para ventanas flotantes", "toggle"),
+            ],
+            "decoration": [
+                SectionItem("decoration:rounding", "Rounding", "Radio de esquinas redondeadas en píxeles (0 = recto)", "stepper", 0, 30, 1),
+                SectionItem("decoration:active_opacity", "Active opacity", "Opacidad de la ventana activa (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:inactive_opacity", "Inactive opacity", "Opacidad de ventanas no enfocadas (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:dim_inactive", "Dim inactive", "Atenúa la iluminación de ventanas inactivas", "toggle"),
+                SectionItem("decoration:dim_strength", "Dim strength", "Intensidad del efecto de atenuación en ventanas inactivas", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:blur:enabled", "Blur enabled", "Desenfoque de fondo tipo Kawase para transparencias", "toggle"),
+                SectionItem("decoration:blur:size", "Blur size", "Radio del algoritmo de desenfoque", "stepper", 1, 15, 1),
+                SectionItem("decoration:blur:passes", "Blur passes", "Número de pasadas de filtrado (mayor = más suave)", "stepper", 1, 6, 1),
+                SectionItem("decoration:shadow:enabled", "Drop shadows", "Habilita sombras exteriores bajo las ventanas", "toggle"),
+            ],
+            "animations": [
+                SectionItem("animations:enabled", "Enable animations", "Habilita transiciones y animaciones de Hyprland", "toggle"),
+                SectionItem("animations:preset", "Animation preset", "Preset de velocidad de curvas bezier", "select", options=["smooth", "snappy", "minimal"]),
+                SectionItem("animations:windows", "Windows animation", "Animación al abrir, cerrar o mover ventanas", "select", options=["popin 80%", "slide", "fade"]),
+                SectionItem("animations:workspaces", "Workspaces animation", "Animación de transición al cambiar de escritorio", "select", options=["slide", "slidefade", "fade"]),
+            ],
+            "cursor": [
+                SectionItem("cursor:no_hardware_cursors", "Disable HW cursor", "Desactiva cursor por hardware (corrige parpadeos Nvidia)", "toggle"),
+                SectionItem("cursor:inactive_timeout", "Inactive timeout", "Segundos de inactividad antes de ocultar el puntero (0 = nunca)", "stepper", 0, 30, 1),
+                SectionItem("cursor:zoom_factor", "Zoom factor", "Factor de aumento de pantalla con cursor", "slider", 1.0, 3.0, 0.25),
+            ],
+            "keybinds": [
+                SectionItem("input:compose_key", "Tecla Bloq Mayús", "Alt Gr = Compose (Bloq Mayús normal) vs Omarchy default", "select", options=["Alt Gr (Compose) [Normal]", "Bloq Mayús (Compose)"]),
+                SectionItem("action:fix_caps", "Aplicar corrección Bloq Mayús", "Guarda la opción en input.lua y libera Bloq Mayús", "action"),
+                SectionItem("input:repeat_rate", "Keyboard repeat rate", "Frecuencia de repetición de teclas en Hz", "stepper", 10, 80, 5),
+                SectionItem("input:repeat_delay", "Keyboard repeat delay", "Retardo antes de iniciar repetición continua (ms)", "stepper", 150, 600, 25),
+                SectionItem("input:numlock_by_default", "Numlock by default", "Activa el teclado numérico al iniciar sesión", "toggle"),
+            ],
+            "devices": [
+                SectionItem("input:sensitivity", "Mouse sensitivity", "Sensibilidad del puntero (-1.0 a 1.0)", "slider", -1.0, 1.0, 0.1),
+                SectionItem("input:accel_profile", "Acceleration profile", "Perfil de aceleración (flat = precisa, adaptive = dinámica)", "select", options=["flat", "adaptive"]),
+                SectionItem("input:touchpad:natural_scroll", "Natural scroll", "Dirección inversa de scroll (estilo smartphone)", "toggle"),
+                SectionItem("input:touchpad:clickfinger_behavior", "Clickfinger behavior", "Clic con dos dedos equivale a clic secundario", "toggle"),
+                SectionItem("input:touchpad:tap-to-click", "Tap to click", "Tocar el touchpad genera un clic primario", "toggle"),
+                SectionItem("input:touchpad:disable_while_typing", "Disable while typing", "Inhabilita el touchpad temporalmente al escribir", "toggle"),
+                SectionItem("gestures:workspace_swipe", "Workspace swipe", "Gesto de 3 dedos en touchpad para cambiar escritorios", "toggle"),
+            ],
+            "monitors": [
+                SectionItem("display:scale", "Monitor scale", "Escala de visualización HiDPI para la pantalla activa", "select", options=self.scales),
+                SectionItem("display:mode", "Display resolution & Hz", "Modo y frecuencia de actualización del monitor", "select", options=["1920x1080@60Hz", "1920x1080@75Hz", "1280x720@60Hz"]),
+                SectionItem("action:save_monitor", "Guardar configuración de monitor", "Escribe los cambios en ~/.config/hypr/monitors.lua", "action"),
+            ],
+            "workspaces": [
+                SectionItem("workspace:count", "Persistent workspaces", "Cantidad de escritorios fijos en la barra", "stepper", 1, 10, 1),
+                SectionItem("workspace:layout_toggle", "Workspace layout", "Alternar entre modo dwindle o modo niri (scrolling)", "select", options=["dwindle", "scrolling"]),
+            ],
+            "layouts": [
+                SectionItem("dwindle:pseudotile", "Dwindle pseudotile", "Permite que ventanas de mosaico mantengan tamaño original", "toggle"),
+                SectionItem("dwindle:preserve_split", "Preserve split", "Mantiene la dirección de división al cerrar ventanas", "toggle"),
+                SectionItem("dwindle:smart_split", "Smart split", "Determina división según posición del cursor", "toggle"),
+                SectionItem("master:new_status", "Master new status", "Ubicación de ventanas recién creadas (master / slave)", "select", options=["master", "slave"]),
+            ],
+            "rules": [
+                SectionItem("rules:pavucontrol_float", "Float Pavucontrol", "Abre el panel de audio Pavucontrol como ventana flotante", "toggle"),
+                SectionItem("rules:calculator_float", "Float Calculator", "Abre la calculadora en modo flotante centrado", "toggle"),
+            ],
+            "autostart": [
+                SectionItem("autostart:waybar", "Omarchy Shell / Bar", "Inicia la barra superior automáticamente", "toggle"),
+                SectionItem("autostart:swaync", "Notification center", "Demonio de notificaciones de escritorio", "toggle"),
+                SectionItem("autostart:fastfetch", "Fastfetch on terminal", "Muestra información de sistema al abrir terminal", "toggle"),
+            ],
+            "omarchy": [
+                SectionItem("omarchy:theme", "Active Omarchy Theme", "Aplica el tema visual completo al sistema", "select", options=themes),
+                SectionItem("omarchy:icons", "Icon Theme", "Tema de iconos en el sistema", "select", options=["Lizarbe-Red", "Papirus-Dark", "Adwaita"]),
+                SectionItem("action:apply_lizarbe_full", "Aplicar Setup Lizarbe Oficial", "Configura Tema Lizarbe, iconos Red y logo Fastfetch", "action"),
+                SectionItem("action:install_hook", "Registrar hook en 'omarchy update'", "Mantiene Meca actualizado automáticamente", "action"),
+            ],
+        }
 
     def run(self) -> None:
-        """Inicia el ciclo principal de la interfaz en terminal raw mode."""
+        """Ciclo principal TUI en modo crudo."""
         if not sys.stdin.isatty():
-            print("Error: meca-hyprconfig debe ejecutarse en una terminal interactiva (TTY).")
+            print("Error: meca debe ejecutarse en una terminal TTY.")
             return
 
         fd = sys.stdin.fileno()
@@ -68,7 +188,7 @@ class MecaTUI:
 
         try:
             tty.setraw(fd)
-            # Entrar en alternate screen buffer y ocultar cursor
+            # Alternate screen buffer, ocultar cursor
             sys.stdout.write("\033[?1049h\033[?25l")
             sys.stdout.flush()
 
@@ -76,314 +196,256 @@ class MecaTUI:
                 self.render()
                 self.handle_input(fd)
         finally:
-            # Restaurar cursor, salir de alternate screen y restaurar termios
             sys.stdout.write("\033[?25h\033[?1049l\033[0m")
             sys.stdout.flush()
             if self.orig_termios:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.orig_termios)
 
+    # ==========================
+    # RENDERIZADO
+    # ==========================
+
     def render(self) -> None:
-        """Dibuja la pantalla completa en el buffer del terminal."""
-        cols, rows = shutil.get_terminal_size((80, 24))
+        cols, rows = shutil.get_terminal_size((90, 26))
+        sidebar_w = 26
+        content_w = cols - sidebar_w - 1  # 1 para el separador vertical
         buf: List[str] = ["\033[H"]
 
-        accent = "accent"
-        bg_col = "background"
-        fg_col = "foreground"
-
-        # 1. Barra de Título y Sistema
+        # 1. Barra de Título Superior (Estilo Terminal Sobrio)
         ver = HyprIPC.get_version_info()
-        title_left = f" MECA HyprConfig — Omarchy Control Center "
-        theme_info = f"Tema: {self.theme_engine.current_theme} | Hyprland: {ver} "
-        space_len = max(0, cols - len(title_left) - len(theme_info))
-        buf.append(self.theme_engine.style("bright_foreground", accent, title_left, bold=True))
-        buf.append(self.theme_engine.style("bright_foreground", accent, " " * space_len))
-        buf.append(self.theme_engine.style("bright_foreground", accent, theme_info) + "\r\n")
+        title_left = f" MECA HyprConfig "
+        title_right = f"Hyprland {ver} | Tema: {self.theme_engine.current_theme} "
+        space_len = max(0, cols - len(title_left) - len(title_right))
+        buf.append(self.theme_engine.style("bright_foreground", "accent", title_left, bold=True))
+        buf.append(self.theme_engine.style("bright_foreground", "accent", " " * space_len))
+        buf.append(self.theme_engine.style("bright_foreground", "accent", title_right) + "\r\n")
 
-        # 2. Barra de Pestañas
-        tab_line = " "
-        for i, (num, name) in enumerate(self.TABS):
-            if i == self.current_tab_idx:
-                tab_line += self.theme_engine.style("bright_foreground", accent, f" [{num}] {name} ", bold=True)
-            else:
-                tab_line += self.theme_engine.style("foreground", None, f"  [{num}] {name}  ")
-            tab_line += " "
-        buf.append(tab_line + "\r\n")
-        buf.append(self.theme_engine.fg("muted", "─" * cols) + "\r\n")
+        # 2. Render de Cuerpo Dividido (Sidebar + Content)
+        body_rows = rows - 3  # Menos header y footer
+        sidebar_lines = self._render_sidebar(sidebar_w, body_rows)
+        content_lines = self._render_content(content_w, body_rows)
 
-        # 3. Contenido según pestaña activa
-        content_lines = []
-        if self.current_tab_idx == 0:
-            content_lines = self._render_monitors_tab(cols)
-        elif self.current_tab_idx == 1:
-            content_lines = self._render_appearance_tab(cols)
-        elif self.current_tab_idx == 2:
-            content_lines = self._render_animations_tab(cols)
-        elif self.current_tab_idx == 3:
-            content_lines = self._render_keybinds_tab(cols)
-        elif self.current_tab_idx == 4:
-            content_lines = self._render_input_tab(cols)
-        elif self.current_tab_idx == 5:
-            content_lines = self._render_lizarbe_tab(cols)
+        sep_char = "│"
+        for r in range(body_rows):
+            s_line = sidebar_lines[r] if r < len(sidebar_lines) else " " * sidebar_w
+            c_line = content_lines[r] if r < len(content_lines) else ""
+            buf.append(s_line + self.theme_engine.fg("muted", sep_char) + c_line + "\033[K\r\n")
 
-        # Rellenar filas hasta la barra de estado
-        usable_rows = rows - 4
-        for r in range(usable_rows):
-            if r < len(content_lines):
-                line = content_lines[r]
-                buf.append(line + "\033[K\r\n")
-            else:
-                buf.append("\033[K\r\n")
-
-        # 4. Barra de Estado / Atajos inferiores
-        status_text = f" {self.status_message}"
-        keys_hint = " Tab/1-6: Pestañas | ↑/↓: Elemento | ←/→: Ajustar | Enter/s: Guardar | q: Salir "
-        status_space = max(0, cols - len(status_text) - len(keys_hint))
-        buf.append(self.theme_engine.style("bright_foreground", "muted", status_text))
-        buf.append(self.theme_engine.style("bright_foreground", "muted", " " * status_space))
+        # 3. Barra Inferior de Estado (Sobria, Cuadrada)
+        status_txt = f" {self.status_message}"
+        keys_hint = " [Tab]: Cambiar foco | [↑/↓]: Mover | [←/→]: Ajustar | [s]: Guardar | [q]: Salir "
+        footer_space = max(0, cols - len(status_txt) - len(keys_hint))
+        buf.append(self.theme_engine.style("bright_foreground", "muted", status_txt))
+        buf.append(self.theme_engine.style("bright_foreground", "muted", " " * footer_space))
         buf.append(self.theme_engine.style("bright_foreground", "muted", keys_hint))
 
         sys.stdout.write("".join(buf))
         sys.stdout.flush()
 
-    # ==========================
-    # RENDERIZADO DE PESTAÑAS
-    # ==========================
+    def _render_sidebar(self, width: int, max_rows: int) -> List[str]:
+        lines: List[str] = []
+        current_cat = None
 
-    def _render_monitors_tab(self, cols: int) -> List[str]:
-        lines = []
-        lines.append(self.theme_engine.style("bright_foreground", None, " 🖥️  CONFIGURACIÓN DE MONITORES Y PANTALLAS", bold=True))
-        lines.append(self.theme_engine.fg("muted", " Detecta resolución, frecuencia de refresco (Hz) y escala sin tocar archivos de texto."))
-        lines.append("")
+        for idx, (cat, sec_id, icon, title, desc) in enumerate(self.SECTIONS):
+            # Encabezado de Categoría en mayúsculas
+            if cat != current_cat:
+                current_cat = cat
+                lines.append(self.theme_engine.style("muted", None, f" {cat}".ljust(width)[:width], bold=True))
 
-        if not self.monitors:
-            lines.append("  " + self.theme_engine.fg("yellow", "No se detectaron monitores activos a través de hyprctl."))
-            lines.append("  Presiona [r] para reintentar detección.")
-            return lines
+            is_sel = (idx == self.current_section_idx)
+            is_active_pane = (self.active_pane == "sidebar")
 
-        # Selector de monitor
-        lines.append(self.theme_engine.fg("accent", "  ┌─ Monitores Detectados:"))
-        for idx, mon in enumerate(self.monitors):
-            prefix = "  │  " + ("► " if idx == self.selected_monitor_idx else "  ")
-            mon_desc = f"{mon.get('name', 'Disp')} — {mon.get('description', '')} ({mon.get('width')}x{mon.get('height')} @ {mon.get('refreshRate', 60):.0f}Hz)"
-            if idx == self.selected_monitor_idx:
-                lines.append(prefix + self.theme_engine.style("bright_foreground", "selection", mon_desc, bold=True))
+            # Iconos SOLO en el sidebar izquierdo, sin emojis
+            item_text = f" {icon} {title}".ljust(width)
+            if len(item_text) > width:
+                item_text = item_text[:width]
+
+            if is_sel and is_active_pane:
+                # Cuadro de selección sobrio y rectangular (Estilo Omarchy / macOS)
+                line = self.theme_engine.style("bright_foreground", "selection", item_text, bold=True)
+            elif is_sel:
+                line = self.theme_engine.style("bright_foreground", "muted", item_text, bold=True)
             else:
-                lines.append(prefix + mon_desc)
-        lines.append(self.theme_engine.fg("accent", "  └────────────────────────"))
-        lines.append("")
+                line = self.theme_engine.style("foreground", None, item_text)
 
-        curr_mon = self.monitors[self.selected_monitor_idx]
-        lines.append(self.theme_engine.style("bright_foreground", None, f"  Ajustes para {curr_mon.get('name')}:", bold=True))
-        
-        items = [
-            ("Escala de Pantalla (HiDPI)", f"{curr_mon.get('scale', 1.0)}x (Usa ← / → para cambiar)"),
-            ("Resolución Actual", f"{curr_mon.get('width')}x{curr_mon.get('height')} @ {curr_mon.get('refreshRate', 60):.1f} Hz"),
-            ("Modos Disponibles", f"{len(curr_mon.get('availableModes', []))} resoluciones soportadas"),
-            ("Guardar y Aplicar a monitors.lua", "[ Presiona Enter o 's' ]"),
-        ]
-
-        for i, (label, val) in enumerate(items):
-            is_sel = (i == self.selected_item_idx)
-            ptr = "► " if is_sel else "  "
-            if is_sel:
-                line = f"   {ptr}{self.theme_engine.style('bright_foreground', 'selection', f' {label.ljust(35)} : {val} ')}"
-            else:
-                line = f"   {ptr}{label.ljust(35)} : {self.theme_engine.fg('accent', val)}"
             lines.append(line)
 
-        return lines
+        # Rellenar filas sobrantes
+        while len(lines) < max_rows:
+            lines.append(" " * width)
 
-    def _render_appearance_tab(self, cols: int) -> List[str]:
-        lines = []
-        lines.append(self.theme_engine.style("bright_foreground", None, " 🎨 APARIENCIA, BORDES, GAPS Y TEMAS DE OMARCHY", bold=True))
-        lines.append(self.theme_engine.fg("muted", " Personaliza en caliente el aspecto visual de tus ventanas y la paleta del escritorio."))
-        lines.append("")
+        return lines[:max_rows]
 
-        # Sliders y opciones
-        g_out = self.settings.get("gaps_out", 10)
-        g_in = self.settings.get("gaps_in", 5)
-        rnd = self.settings.get("rounding", 8)
-        bs = self.settings.get("border_size", 2)
-        dim = "Activado" if self.settings.get("dim_inactive", False) else "Desactivado"
-        theme_name = self.available_themes[self.selected_theme_idx] if self.available_themes else "Default"
+    def _render_content(self, width: int, max_rows: int) -> List[str]:
+        lines: List[str] = []
+        sec_meta = self.SECTIONS[self.current_section_idx]
+        sec_id = sec_meta[1]
+        sec_title = sec_meta[3]
+        sec_desc = sec_meta[4]
 
-        items = [
-            ("Tema Omarchy", f"<{theme_name}> (Usa ← / → para preseleccionar)", "Cambia colores globales"),
-            ("Separación Exterior (gaps_out)", f"{g_out} px  " + self._bar(g_out, 30), "Espacio con la pantalla"),
-            ("Separación Entre Ventanas (gaps_in)", f"{g_in} px  " + self._bar(g_in, 20), "Espacio entre apps"),
-            ("Esquinas Redondeadas (rounding)", f"{rnd} px  " + self._bar(rnd, 25), "Curvatura de bordes"),
-            ("Grosor de Bordes (border_size)", f"{bs} px  " + self._bar(bs, 6), "Línea de contorno"),
-            ("Atenuar Ventanas Inactivas (dim)", f"[{dim}]", "Foco visual en ventana activa"),
-            ("Aplicar Cambios en Hyprland", "[ Presiona Enter o 's' ]", "Guarda en hyprland-gui.lua"),
-        ]
+        # Encabezado de la Sección Activa
+        lines.append(" " + self.theme_engine.style("bright_foreground", None, sec_title.upper(), bold=True))
+        lines.append(" " + self.theme_engine.fg("muted", sec_desc))
+        lines.append(" " + self.theme_engine.fg("muted", "─" * (width - 2)))
 
-        for i, (label, val, desc) in enumerate(items):
-            is_sel = (i == self.selected_item_idx)
-            ptr = "► " if is_sel else "  "
+        items = self.section_items.get(sec_id, [])
+        is_active_pane = (self.active_pane == "content")
+
+        for i, item in enumerate(items):
+            is_sel = (i == self.selected_item_idx and is_active_pane)
+            val_str = self._format_item_control(item, width)
+
+            # Nombre y descripción
+            title_part = f"  {item.name}"
+            space_middle = max(2, width - len(title_part) - len(val_str) - 3)
+
             if is_sel:
-                line = f"   {ptr}{self.theme_engine.style('bright_foreground', 'selection', f' {label.ljust(35)} : {val.ljust(25)} ')} {self.theme_engine.fg('muted', desc)}"
+                # Fila seleccionada con caja rectangular sobria (Estilo Omarchy Widget)
+                row_str = f" {title_part}{' ' * space_middle}{val_str} "
+                lines.append(self.theme_engine.style("bright_foreground", "selection", row_str, bold=True))
+                desc_str = f"   └─ {item.desc}"
+                lines.append(self.theme_engine.fg("muted", desc_str[:width]))
             else:
-                line = f"   {ptr}{label.ljust(35)} : {self.theme_engine.fg('bright_foreground', val.ljust(25))} {self.theme_engine.fg('muted', desc)}"
-            lines.append(line)
+                row_str = f" {title_part}{' ' * space_middle}{val_str} "
+                lines.append(row_str)
+                desc_str = f"   {item.desc}"
+                lines.append(self.theme_engine.fg("muted", desc_str[:width]))
 
-        lines.append("")
-        # Simulación visual de dos ventanas en terminal
-        lines.append(self.theme_engine.fg("accent", "   ┌─ Vista Previa Simulada de Ventanas:"))
-        lines.append(f"   │  ┌────── Inactiva ──────┐  " + self.theme_engine.style("bright_foreground", "accent", f"┌────── Activa ({rnd}px) ──────┐"))
-        lines.append(f"   │  │ $ terminal           │  " + self.theme_engine.style("bright_foreground", "accent", f"│ $ omarchy theme: {theme_name} │"))
-        lines.append(f"   │  │   gaps_in: {g_in}px      │  " + self.theme_engine.style("bright_foreground", "accent", f"│   border_size: {bs}px       │"))
-        lines.append(f"   │  └──────────────────────┘  " + self.theme_engine.style("bright_foreground", "accent", f"└────────────────────────────┘"))
-        lines.append(self.theme_engine.fg("accent", "   └──────────────────────────────────────────────────────────"))
+            lines.append("")  # Espacio entre items
 
-        return lines
+        while len(lines) < max_rows:
+            lines.append(" " * width)
 
-    def _render_animations_tab(self, cols: int) -> List[str]:
-        lines = []
-        lines.append(self.theme_engine.style("bright_foreground", None, " ⚡ ANIMACIONES Y FLUIDEZ DE HYPRLAND", bold=True))
-        lines.append(self.theme_engine.fg("muted", " Modifica la velocidad y respuesta en transiciones de ventanas y workspaces."))
-        lines.append("")
+        return lines[:max_rows]
 
-        anim_on = "Activadas (Fluido)" if self.settings.get("animations_enabled", True) else "Desactivadas (Instantáneo)"
-        preset = self.settings.get("animation_preset", "smooth")
+    def _format_item_control(self, item: SectionItem, max_w: int) -> str:
+        """Formatea el control interactivo: Stepper, Toggle, Select o Slider."""
+        val = self._get_item_value(item)
 
-        items = [
-            ("Animaciones Globales", f"[{anim_on}] (Enter o ← / → para alternar)", "Efectos visuales"),
-            ("Preset de Fluidez", f"<{preset.upper()}> (smooth / snappy / minimal)", "Curvas de velocidad"),
-            ("Aplicar y Guardar", "[ Presiona Enter o 's' ]", "Actualiza configuración"),
-        ]
+        if item.item_type == "stepper":
+            # Stepper estilo HyprMod: [ - ]  <val>  [ + ]
+            return f"[ - ]  {str(val):>3}  [ + ]"
 
-        for i, (label, val, desc) in enumerate(items):
-            is_sel = (i == self.selected_item_idx)
-            ptr = "► " if is_sel else "  "
-            if is_sel:
-                line = f"   {ptr}{self.theme_engine.style('bright_foreground', 'selection', f' {label.ljust(30)} : {val.ljust(30)} ')} {self.theme_engine.fg('muted', desc)}"
-            else:
-                line = f"   {ptr}{label.ljust(30)} : {self.theme_engine.fg('bright_foreground', val.ljust(30))} {self.theme_engine.fg('muted', desc)}"
-            lines.append(line)
+        elif item.item_type == "toggle":
+            # Toggle cuadrado estilo widget de terminal
+            return "[ ■ ] ON" if val else "[   ] off"
 
-        lines.append("")
-        lines.append(self.theme_engine.fg("muted", "   Consejo: Desactivar animaciones es ideal en ordenadores de recursos modestos."))
-        return lines
+        elif item.item_type == "slider":
+            # Slider estilo barra lineal recta
+            pct = int(((val - item.min_val) / max(0.001, item.max_val - item.min_val)) * 10)
+            pct = max(0, min(10, pct))
+            bar = "─" * pct + "●" + "─" * (10 - pct)
+            if isinstance(val, float):
+                return f"{bar}  {val:.2f}"
+            return f"{bar}  {val}"
 
-    def _render_keybinds_tab(self, cols: int) -> List[str]:
-        lines = []
-        lines.append(self.theme_engine.style("bright_foreground", None, " ⌨️  TECLADO, ATAJOS Y CORRECCIÓN DE BLOQ MAYÚS", bold=True))
-        lines.append(self.theme_engine.fg("muted", " Resuelve la pérdida de la tecla Bloq Mayús y revisa los atajos clave del sistema."))
-        lines.append("")
+        elif item.item_type == "select":
+            # Select estilo rectangular
+            return f"[ {val} v ]"
 
-        # Alerta Bloq Mayús
-        is_fixed = (self.settings.get("compose_key") == "ralt")
-        caps_status = "Corregido: Bloq Mayús NORMAL (Compose en Alt Gr)" if is_fixed else "Default Omarchy (Bloq Mayús = Compose)"
+        elif item.item_type == "action":
+            return "[ EJECUTAR ]"
 
-        items = [
-            ("Comportamiento Bloq Mayús", f"[{caps_status}]", "Presiona Enter para alternar"),
-            ("Aplicar Corrección Ahora", "[ Enter para guardar en input.lua ]", "Libera Bloq Mayús de inmediato"),
-        ]
+        return str(val)
 
-        for i, (label, val, desc) in enumerate(items):
-            is_sel = (i == self.selected_item_idx)
-            ptr = "► " if is_sel else "  "
-            color_val = "green" if is_fixed and i == 0 else "bright_foreground"
-            if is_sel:
-                line = f"   {ptr}{self.theme_engine.style('bright_foreground', 'selection', f' {label.ljust(30)} : {val.ljust(45)} ')}"
-            else:
-                line = f"   {ptr}{label.ljust(30)} : {self.theme_engine.fg(color_val, val.ljust(45))}"
-            lines.append(line)
+    def _get_item_value(self, item: SectionItem) -> Any:
+        """Obtiene el valor actual de la variable en memoria."""
+        key = item.key
 
-        lines.append("")
-        lines.append(self.theme_engine.fg("accent", "   ┌─ Atajos Principales de Omarchy + Hyprland (SUPER = Tecla Windows):"))
-        binds = [
-            ("SUPER + RETURN", "Abrir Terminal principal (foot / ghostty)"),
-            ("SUPER + SPACE", "Lanzador de Aplicaciones y Menú Omarchy"),
-            ("SUPER + Q", "Cerrar ventana actual"),
-            ("SUPER + E", "Explorador de Archivos"),
-            ("SUPER + SHIFT + S", "Captura de pantalla recortada"),
-            ("SUPER + [1..9]", "Cambiar de Espacio de Trabajo (Workspace)"),
-        ]
-        for key, desc in binds:
-            lines.append(f"   │   {self.theme_engine.style('bright_foreground', 'muted', f' {key.ljust(20)} ')}  → {desc}")
-        lines.append(self.theme_engine.fg("accent", "   └───────────────────────────────────────────────────────────────────"))
+        if key == "general:gaps_in":
+            return self.settings.get("gaps_in", 5)
+        if key == "general:gaps_out":
+            return self.settings.get("gaps_out", 10)
+        if key == "general:border_size":
+            return self.settings.get("border_size", 2)
+        if key == "general:resize_on_border":
+            return self.settings.get("resize_on_border", True)
+        if key == "general:layout":
+            return self.settings.get("layout", "dwindle")
+        if key == "general:allow_tearing":
+            return self.settings.get("allow_tearing", False)
+        if key == "general:snap:enabled":
+            return self.settings.get("snap_enabled", False)
 
-        return lines
+        if key == "decoration:rounding":
+            return self.settings.get("rounding", 8)
+        if key == "decoration:active_opacity":
+            return self.settings.get("active_opacity", 1.0)
+        if key == "decoration:inactive_opacity":
+            return self.settings.get("inactive_opacity", 0.95)
+        if key == "decoration:dim_inactive":
+            return self.settings.get("dim_inactive", False)
+        if key == "decoration:dim_strength":
+            return self.settings.get("dim_strength", 0.15)
+        if key == "decoration:blur:enabled":
+            return self.settings.get("blur_enabled", True)
+        if key == "decoration:blur:size":
+            return self.settings.get("blur_size", 5)
+        if key == "decoration:blur:passes":
+            return self.settings.get("blur_passes", 2)
+        if key == "decoration:shadow:enabled":
+            return self.settings.get("shadow_enabled", True)
 
-    def _render_input_tab(self, cols: int) -> List[str]:
-        lines = []
-        lines.append(self.theme_engine.style("bright_foreground", None, " 🖱️  RATÓN, TOUCHPAD Y GESTOS", bold=True))
-        lines.append(self.theme_engine.fg("muted", " Sensibilidad de puntero, scroll natural y gestos con dedos."))
-        lines.append("")
+        if key == "animations:enabled":
+            return self.settings.get("animations_enabled", True)
+        if key == "animations:preset":
+            return self.settings.get("animation_preset", "smooth")
+        if key == "animations:windows":
+            return self.settings.get("anim_windows", "popin 80%")
+        if key == "animations:workspaces":
+            return self.settings.get("anim_workspaces", "slide")
 
-        sens = self.settings.get("sensitivity", 0.0)
-        accel = self.settings.get("accel_profile", "flat")
-        nat = "Activado (Inverso smartphone)" if self.settings.get("natural_scroll", False) else "Desactivado (Estándar PC)"
+        if key == "cursor:no_hardware_cursors":
+            return self.settings.get("no_hw_cursors", False)
+        if key == "cursor:inactive_timeout":
+            return self.settings.get("cursor_timeout", 0)
+        if key == "cursor:zoom_factor":
+            return self.settings.get("cursor_zoom", 1.0)
 
-        items = [
-            ("Sensibilidad del Ratón", f"{sens:+.2f}  " + self._bar(int((sens + 1.0) * 10), 20), "← / → para calibrar"),
-            ("Perfil de Aceleración", f"<{accel.upper()}> (flat: precisa / adaptive: dinámica)", "Enter para alternar"),
-            ("Scroll Natural Touchpad", f"[{nat}]", "Enter para alternar"),
-            ("Aplicar y Guardar", "[ Presiona Enter o 's' ]", "Guarda en hyprland-gui.lua"),
-        ]
+        if key == "input:compose_key":
+            return "Alt Gr (Compose) [Normal]" if self.settings.get("compose_key") == "ralt" else "Bloq Mayús (Compose)"
+        if key == "input:repeat_rate":
+            return self.settings.get("repeat_rate", 40)
+        if key == "input:repeat_delay":
+            return self.settings.get("repeat_delay", 250)
+        if key == "input:numlock_by_default":
+            return self.settings.get("numlock", True)
 
-        for i, (label, val, desc) in enumerate(items):
-            is_sel = (i == self.selected_item_idx)
-            ptr = "► " if is_sel else "  "
-            if is_sel:
-                line = f"   {ptr}{self.theme_engine.style('bright_foreground', 'selection', f' {label.ljust(30)} : {val.ljust(35)} ')} {self.theme_engine.fg('muted', desc)}"
-            else:
-                line = f"   {ptr}{label.ljust(30)} : {self.theme_engine.fg('bright_foreground', val.ljust(35))} {self.theme_engine.fg('muted', desc)}"
-            lines.append(line)
+        if key == "input:sensitivity":
+            return self.settings.get("sensitivity", 0.0)
+        if key == "input:accel_profile":
+            return self.settings.get("accel_profile", "flat")
+        if key == "input:touchpad:natural_scroll":
+            return self.settings.get("natural_scroll", False)
+        if key == "input:touchpad:clickfinger_behavior":
+            return self.settings.get("clickfinger", True)
+        if key == "input:touchpad:tap-to-click":
+            return self.settings.get("tap_to_click", True)
+        if key == "input:touchpad:disable_while_typing":
+            return self.settings.get("disable_typing", True)
+        if key == "gestures:workspace_swipe":
+            return self.settings.get("workspace_swipe", True)
 
-        return lines
+        if key == "display:scale":
+            return f"{self.monitors[0].get('scale', 1.0)}x" if self.monitors else "1x"
+        if key == "display:mode":
+            if self.monitors:
+                m = self.monitors[0]
+                return f"{m.get('width')}x{m.get('height')}@{m.get('refreshRate', 60):.0f}Hz"
+            return "1920x1080@60Hz"
 
-    def _render_lizarbe_tab(self, cols: int) -> List[str]:
-        lines = []
-        lines.append(self.theme_engine.style("bright_foreground", None, " 🛡️  SETUP DE BIENVENIDA & IDENTIDAD LIZARBE", bold=True))
-        lines.append(self.theme_engine.fg("muted", " Preparación integral para nuevos usuarios: temas, fastfetch y actualización automática."))
-        lines.append("")
+        if key == "omarchy:theme":
+            return self.theme_engine.current_theme
+        if key == "omarchy:icons":
+            return "Lizarbe-Red"
 
-        has_lizarbe = LizarbeManager.is_lizarbe_installed()
-        has_ff = LizarbeManager.is_fastfetch_lizarbe_configured()
-        hook_path = Path.home() / ".config" / "omarchy" / "hooks" / "post-update.d" / "99-meca-hyprconfig.sh"
-        has_hook = hook_path.exists()
-
-        items = [
-            ("Tema Lizarbe / Lizarbe Light", "[Instalado]" if has_lizarbe else "[No detectado]", "Activar tema completo oficial"),
-            ("Logo Lizarbe en Fastfetch", "[Configurado]" if has_ff else "[Sin configurar]", "Banner ASCII en terminal"),
-            ("Hook en 'omarchy update'", "[Activo]" if has_hook else "[Inactivo]", "Auto-actualización del panel"),
-            ("Aplicar Todo el Setup Lizarbe", "[ Ejecutar Preparación Completa ]", "Configura temas, logo y hook"),
-        ]
-
-        for i, (label, val, desc) in enumerate(items):
-            is_sel = (i == self.selected_item_idx)
-            ptr = "► " if is_sel else "  "
-            val_col = "green" if "Instalado" in val or "Configurado" in val or "Activo" in val else "yellow"
-            if is_sel:
-                line = f"   {ptr}{self.theme_engine.style('bright_foreground', 'selection', f' {label.ljust(32)} : {val.ljust(20)} ')} {self.theme_engine.fg('muted', desc)}"
-            else:
-                line = f"   {ptr}{label.ljust(32)} : {self.theme_engine.fg(val_col, val.ljust(20))} {self.theme_engine.fg('muted', desc)}"
-            lines.append(line)
-
-        lines.append("")
-        lines.append(self.theme_engine.fg("accent", "   ┌─ Estado de Software Amigable Recomendado:"))
-        for name, cmd, inst in LizarbeManager.check_app_status()[:4]:
-            tag = self.theme_engine.fg("green", "✓ Instalado") if inst else self.theme_engine.fg("yellow", "✗ No instalado")
-            lines.append(f"   │   {name.ljust(40)} {tag}")
-        lines.append(self.theme_engine.fg("accent", "   └────────────────────────────────────────────────────────────"))
-
-        return lines
-
-    def _bar(self, val: int, max_val: int) -> str:
-        """Genera una barra de progreso visual en texto."""
-        width = 12
-        filled = max(0, min(width, int((val / max(1, max_val)) * width)))
-        return f"[{'█' * filled}{'░' * (width - filled)}]"
+        return self.settings.get(key, "-")
 
     # ==========================
     # MANEJO DE ENTRADA Y TECLADO
     # ==========================
 
     def handle_input(self, fd: int) -> None:
-        """Lee teclas y eventos de entrada."""
         r, _, _ = select.select([fd], [], [], 0.05)
         if not r:
             return
@@ -392,245 +454,229 @@ class MecaTUI:
         if not ch:
             return
 
-        # Tecla Salir
+        # Salir con q o Esc
         if ch in (b"q", b"Q", b"\x1b") and len(ch) == 1:
             self.running = False
             return
 
-        # Números 1 a 6 para cambiar de pestaña directamente
-        if ch in [b"1", b"2", b"3", b"4", b"5", b"6"]:
-            self.current_tab_idx = int(ch.decode()) - 1
-            self.selected_item_idx = 0
+        # Cambiar foco con Tab, Shift+Tab o h / l
+        if ch in (b"\t", b"\x1b[Z"):
+            self.active_pane = "content" if self.active_pane == "sidebar" else "sidebar"
             return
 
-        # Tab o Shift+Tab
-        if ch == b"\t":
-            self.current_tab_idx = (self.current_tab_idx + 1) % len(self.TABS)
-            self.selected_item_idx = 0
-            return
-        if ch == b"\x1b[Z":  # Shift+Tab
-            self.current_tab_idx = (self.current_tab_idx - 1) % len(self.TABS)
-            self.selected_item_idx = 0
-            return
-
-        # Guardar rápido con 's' o 'S'
+        # Guardar rápido con 's'
         if ch in (b"s", b"S"):
             self.save_all()
             return
 
-        # Flecha Arriba
-        if ch == b"\x1b[A":
-            self.selected_item_idx = max(0, self.selected_item_idx - 1)
+        # Navegación izquierda/derecha entre columnas
+        if ch == b"\x1b[D":  # Flecha Izquierda
+            if self.active_pane == "content":
+                self._adjust_current_item(delta=-1)
+            else:
+                self.active_pane = "sidebar"
             return
 
-        # Flecha Abajo
-        if ch == b"\x1b[B":
-            max_items = self._get_max_items_for_tab()
-            self.selected_item_idx = min(max_items - 1, self.selected_item_idx + 1)
+        if ch == b"\x1b[C":  # Flecha Derecha
+            if self.active_pane == "content":
+                self._adjust_current_item(delta=1)
+            else:
+                self.active_pane = "content"
             return
 
-        # Flecha Izquierda / Derecha / Enter
-        if ch == b"\x1b[D":  # Left
-            self._on_adjust(delta=-1)
-            return
-        if ch == b"\x1b[C":  # Right
-            self._on_adjust(delta=1)
-            return
-
-        if ch in (b"\r", b"\n"):  # Enter
-            self._on_activate()
+        # Navegación vertical arriba/abajo
+        if ch == b"\x1b[A":  # Flecha Arriba
+            if self.active_pane == "sidebar":
+                self.current_section_idx = max(0, self.current_section_idx - 1)
+                self.selected_item_idx = 0
+            else:
+                self.selected_item_idx = max(0, self.selected_item_idx - 1)
             return
 
-    def _get_max_items_for_tab(self) -> int:
-        counts = [4, 7, 3, 2, 4, 4]
-        return counts[self.current_tab_idx]
+        if ch == b"\x1b[B":  # Flecha Abajo
+            if self.active_pane == "sidebar":
+                self.current_section_idx = min(len(self.SECTIONS) - 1, self.current_section_idx + 1)
+                self.selected_item_idx = 0
+            else:
+                sec_id = self.SECTIONS[self.current_section_idx][1]
+                items_len = len(self.section_items.get(sec_id, []))
+                self.selected_item_idx = min(items_len - 1, self.selected_item_idx + 1)
+            return
 
-    def _on_adjust(self, delta: int) -> None:
-        """Ajusta valores con las flechas izquierda y derecha."""
-        tab = self.current_tab_idx
-        idx = self.selected_item_idx
+        # Enter o Espacio para activar/conmutar
+        if ch in (b"\r", b"\n", b" "):
+            if self.active_pane == "sidebar":
+                self.active_pane = "content"
+            else:
+                self._activate_current_item()
+            return
 
-        # Pestaña 0: Monitores
-        if tab == 0:
-            if idx == 0 and self.monitors:  # Escala
-                self.mon_scale_idx = (self.mon_scale_idx + delta) % len(self.scales)
-                new_scale = self.scales[self.mon_scale_idx]
-                self.monitors[self.selected_monitor_idx]["scale"] = new_scale
-                self.set_status(f"Escala cambiada a {new_scale}x (Presiona Enter para aplicar en monitors.lua).")
+    def _adjust_current_item(self, delta: int) -> None:
+        """Modifica el valor del elemento seleccionado con flechas izquierda/derecha."""
+        sec_id = self.SECTIONS[self.current_section_idx][1]
+        items = self.section_items.get(sec_id, [])
+        if not items or self.selected_item_idx >= len(items):
+            return
 
-        # Pestaña 1: Apariencia
-        elif tab == 1:
-            if idx == 0:  # Tema
-                if self.available_themes:
-                    self.selected_theme_idx = (self.selected_theme_idx + delta) % len(self.available_themes)
-                    t_name = self.available_themes[self.selected_theme_idx]
-                    self.set_status(f"Tema preseleccionado: {t_name}. Presiona Enter para aplicar al sistema.")
-            elif idx == 1:  # gaps_out
-                val = max(0, min(50, self.settings.get("gaps_out", 10) + delta))
-                self.settings["gaps_out"] = val
-                HyprIPC.set_keyword("general:gaps_out", val)
-            elif idx == 2:  # gaps_in
-                val = max(0, min(30, self.settings.get("gaps_in", 5) + delta))
-                self.settings["gaps_in"] = val
-                HyprIPC.set_keyword("general:gaps_in", val)
-            elif idx == 3:  # rounding
-                val = max(0, min(30, self.settings.get("rounding", 8) + delta))
-                self.settings["rounding"] = val
-                HyprIPC.set_keyword("decoration:rounding", val)
-            elif idx == 4:  # border_size
-                val = max(0, min(10, self.settings.get("border_size", 2) + delta))
-                self.settings["border_size"] = val
-                HyprIPC.set_keyword("general:border_size", val)
-            elif idx == 5:  # dim_inactive
-                val = not self.settings.get("dim_inactive", False)
-                self.settings["dim_inactive"] = val
-                HyprIPC.set_keyword("decoration:dim_inactive", val)
+        item = items[self.selected_item_idx]
 
-        # Pestaña 2: Animaciones
-        elif tab == 2:
-            if idx == 0:
-                val = not self.settings.get("animations_enabled", True)
-                self.settings["animations_enabled"] = val
-                HyprIPC.set_keyword("animations:enabled", val)
-            elif idx == 1:
-                presets = ["smooth", "snappy", "minimal"]
-                cur = self.settings.get("animation_preset", "smooth")
-                next_idx = (presets.index(cur) + delta) % len(presets) if cur in presets else 0
-                self.settings["animation_preset"] = presets[next_idx]
+        if item.item_type in ("stepper", "slider"):
+            cur = self._get_item_value(item)
+            new_val = cur + (item.step * delta)
+            if isinstance(item.step, float):
+                new_val = round(new_val, 2)
+            new_val = max(item.min_val, min(item.max_val, new_val))
+            self._set_item_value(item.key, new_val)
+            self._apply_hyprctl_live(item.key, new_val)
 
-        # Pestaña 4: Input / Ratón
-        elif tab == 4:
-            if idx == 0:  # Sensibilidad
-                val = round(max(-1.0, min(1.0, self.settings.get("sensitivity", 0.0) + delta * 0.1)), 2)
-                self.settings["sensitivity"] = val
-                HyprIPC.set_keyword("input:sensitivity", val)
-            elif idx == 1:  # accel_profile
-                acc = "adaptive" if self.settings.get("accel_profile") == "flat" else "flat"
-                self.settings["accel_profile"] = acc
-            elif idx == 2:  # natural_scroll
-                val = not self.settings.get("natural_scroll", False)
-                self.settings["natural_scroll"] = val
-                HyprIPC.set_keyword("input:touchpad:natural_scroll", val)
+        elif item.item_type == "select" and item.options:
+            cur = str(self._get_item_value(item))
+            try:
+                idx = item.options.index(cur)
+            except ValueError:
+                idx = 0
+            next_idx = (idx + delta) % len(item.options)
+            chosen = item.options[next_idx]
+            self._set_item_value(item.key, chosen)
+            self._apply_hyprctl_live(item.key, chosen)
 
-    def _on_activate(self) -> None:
-        """Acción al presionar Enter sobre el elemento seleccionado."""
-        tab = self.current_tab_idx
-        idx = self.selected_item_idx
+        elif item.item_type == "toggle":
+            cur = bool(self._get_item_value(item))
+            self._set_item_value(item.key, not cur)
+            self._apply_hyprctl_live(item.key, not cur)
 
-        # Pestaña 0: Monitores
-        if tab == 0:
+    def _activate_current_item(self) -> None:
+        """Ejecuta la acción o conmuta el toggle del elemento seleccionado."""
+        sec_id = self.SECTIONS[self.current_section_idx][1]
+        items = self.section_items.get(sec_id, [])
+        if not items or self.selected_item_idx >= len(items):
+            return
+
+        item = items[self.selected_item_idx]
+
+        if item.item_type == "toggle":
+            self._adjust_current_item(delta=1)
+        elif item.item_type == "select":
+            self._adjust_current_item(delta=1)
+        elif item.item_type == "action":
+            self._execute_action(item.key)
+
+    def _set_item_value(self, key: str, val: Any) -> None:
+        """Guarda el valor en la estructura de ajustes en memoria."""
+        if key == "general:gaps_in":
+            self.settings["gaps_in"] = int(val)
+        elif key == "general:gaps_out":
+            self.settings["gaps_out"] = int(val)
+        elif key == "general:border_size":
+            self.settings["border_size"] = int(val)
+        elif key == "general:layout":
+            self.settings["layout"] = str(val)
+        elif key == "decoration:rounding":
+            self.settings["rounding"] = int(val)
+        elif key == "decoration:dim_inactive":
+            self.settings["dim_inactive"] = bool(val)
+        elif key == "decoration:dim_strength":
+            self.settings["dim_strength"] = float(val)
+        elif key == "animations:enabled":
+            self.settings["animations_enabled"] = bool(val)
+        elif key == "animations:preset":
+            self.settings["animation_preset"] = str(val)
+        elif key == "input:sensitivity":
+            self.settings["sensitivity"] = float(val)
+        elif key == "input:accel_profile":
+            self.settings["accel_profile"] = str(val)
+        elif key == "input:touchpad:natural_scroll":
+            self.settings["natural_scroll"] = bool(val)
+        elif key == "input:compose_key":
+            self.settings["compose_key"] = "ralt" if "Alt Gr" in str(val) else "caps"
+        elif key == "display:scale":
             if self.monitors:
-                cur = self.monitors[self.selected_monitor_idx]
-                res = f"{cur.get('width')}x{cur.get('height')}"
-                hz = float(cur.get('refreshRate', 60.0))
-                scale = float(cur.get('scale', 1.0))
-                ok = self.config_sync.save_monitor_config(cur.get('name'), res, hz, scale)
-                self.set_status(f"✓ Configuración de monitor {cur.get('name')} guardada y aplicada." if ok else "Error al guardar monitor.")
+                scale_float = float(str(val).replace("x", ""))
+                self.monitors[0]["scale"] = scale_float
+        elif key == "omarchy:theme":
+            self.status_message = f"Aplicando tema {val}..."
+            self.render()
+            self.theme_engine.set_theme(str(val))
+            self.status_message = f"✓ Tema {val} aplicado."
+        else:
+            self.settings[key] = val
 
-        # Pestaña 1: Apariencia
-        elif tab == 1:
-            if idx == 0:  # Aplicar tema
-                t_name = self.available_themes[self.selected_theme_idx]
-                self.set_status(f"Aplicando tema {t_name} mediante Omarchy...")
-                self.render()
-                if self.theme_engine.set_theme(t_name):
-                    self.set_status(f"✓ Tema {t_name} activado con éxito.")
-                else:
-                    self.set_status(f"Error al cambiar tema a {t_name}.")
-            elif idx == 5:  # Toggle Dim
-                self._on_adjust(1)
-            elif idx == 6:  # Guardar
-                self.save_all()
+    def _apply_hyprctl_live(self, key: str, val: Any) -> None:
+        """Aplica la variable en caliente a Hyprland si corresponde."""
+        hypr_map = {
+            "general:gaps_in": "general:gaps_in",
+            "general:gaps_out": "general:gaps_out",
+            "general:border_size": "general:border_size",
+            "general:layout": "general:layout",
+            "decoration:rounding": "decoration:rounding",
+            "decoration:dim_inactive": "decoration:dim_inactive",
+            "decoration:blur:enabled": "decoration:blur:enabled",
+            "animations:enabled": "animations:enabled",
+            "input:sensitivity": "input:sensitivity",
+            "input:accel_profile": "input:accel_profile",
+            "input:touchpad:natural_scroll": "input:touchpad:natural_scroll",
+        }
+        if key in hypr_map:
+            HyprIPC.set_keyword(hypr_map[key], val)
 
-        # Pestaña 2: Animaciones
-        elif tab == 2:
-            if idx in (0, 1):
-                self._on_adjust(1)
-            elif idx == 2:
-                self.save_all()
+    def _execute_action(self, action_key: str) -> None:
+        """Ejecuta acciones especiales como guardar, liberar Bloq Mayús o setup."""
+        if action_key == "action:fix_caps":
+            use_ralt = (self.settings.get("compose_key", "ralt") == "ralt")
+            self.config_sync.fix_caps_lock(use_ralt=use_ralt)
+            self.status_message = "✓ Tecla Bloq Mayús LIBERADA (Compose reasignada a Alt Gr)."
 
-        # Pestaña 3: Teclado & Bloq Mayús
-        elif tab == 3:
-            if idx == 0:  # Toggle opción
-                cur = self.settings.get("compose_key", "ralt")
-                self.settings["compose_key"] = "caps" if cur == "ralt" else "ralt"
-            elif idx in (0, 1):
-                use_ralt = (self.settings.get("compose_key") == "ralt")
-                self.config_sync.fix_caps_lock(use_ralt=use_ralt)
-                msg = "✓ Bloq Mayús LIBERADO (Tecla Compose ahora es Alt Gr)." if use_ralt else "Restaurado Bloq Mayús como Compose."
-                self.set_status(msg)
+        elif action_key == "action:save_monitor":
+            if self.monitors:
+                m = self.monitors[0]
+                res = f"{m.get('width')}x{m.get('height')}"
+                hz = float(m.get('refreshRate', 60.0))
+                scale = float(m.get('scale', 1.0))
+                ok = self.config_sync.save_monitor_config(m.get('name'), res, hz, scale)
+                self.status_message = "✓ Configuración de monitor guardada en monitors.lua." if ok else "Error al guardar monitor."
 
-        # Pestaña 4: Input / Ratón
-        elif tab == 4:
-            if idx in (1, 2):
-                self._on_adjust(1)
-            elif idx == 3:
-                self.save_all()
+        elif action_key == "action:apply_lizarbe_full":
+            self.status_message = "Configurando Setup Lizarbe..."
+            self.render()
+            LizarbeManager.apply_lizarbe_theme("lizarbe")
+            LizarbeManager.ensure_fastfetch_logo()
+            self.config_sync.fix_caps_lock(use_ralt=True)
+            self.install_update_hook()
+            self.theme_engine.reload()
+            self.status_message = "✓ ¡Setup Lizarbe Oficial aplicado al 100%!"
 
-        # Pestaña 5: Setup Lizarbe
-        elif tab == 5:
-            if idx == 0:  # Activar Lizarbe
-                self.set_status("Aplicando tema oficial Lizarbe...")
-                self.render()
-                if LizarbeManager.apply_lizarbe_theme("lizarbe"):
-                    self.theme_engine.reload()
-                    self.set_status("✓ Tema Lizarbe aplicado correctamente.")
-                else:
-                    self.set_status("Error al aplicar tema Lizarbe.")
-            elif idx == 1:  # Fastfetch
-                LizarbeManager.ensure_fastfetch_logo()
-                self.set_status("✓ Logo de Lizarbe asegurado en ~/.config/fastfetch/logo.txt.")
-            elif idx == 2:  # Instalar hook
-                self.install_update_hook()
-            elif idx == 3:  # Todo junto
-                self.set_status("Configurando Setup Lizarbe Completo...")
-                self.render()
-                LizarbeManager.apply_lizarbe_theme("lizarbe")
-                LizarbeManager.ensure_fastfetch_logo()
-                self.config_sync.fix_caps_lock(use_ralt=True)
-                self.install_update_hook()
-                self.save_all()
-                self.theme_engine.reload()
-                self.set_status("✓ ¡Setup Lizarbe completado! Tema, Fastfetch, Bloq Mayús y Hook configurados.")
+        elif action_key == "action:install_hook":
+            self.install_update_hook()
 
     def save_all(self) -> None:
-        """Guarda toda la configuración en hyprland-gui.lua y aplica en vivo."""
+        """Guarda todas las opciones en hyprland-gui.lua y aplica live."""
         ok = self.config_sync.save_gui_settings(self.settings, apply_live=True)
         if ok:
-            self.set_status("✓ Ajustes guardados en ~/.config/hypr/hyprland-gui.lua y aplicados en vivo.")
+            self.status_message = "✓ Ajustes guardados en ~/.config/hypr/hyprland-gui.lua."
         else:
-            self.set_status("Error al guardar ajustes en hyprland-gui.lua.")
+            self.status_message = "Error al guardar configuración."
 
     def install_update_hook(self) -> None:
-        """Instala el hook post-update en ~/.config/omarchy/hooks/post-update.d/."""
         hook_dir = Path.home() / ".config" / "omarchy" / "hooks" / "post-update.d"
         hook_dir.mkdir(parents=True, exist_ok=True)
         hook_file = hook_dir / "99-meca-hyprconfig.sh"
         
         script_dir = Path(__file__).resolve().parent.parent.parent
         hook_content = f"""#!/usr/bin/env bash
-# ==============================================================================
-# Hook post-update para Meca HyprConfig en Omarchy
-# Ejecutado automáticamente por 'omarchy update'
-# ==============================================================================
 set -e
-
 REPO_DIR="{script_dir}"
 if [[ -d "$REPO_DIR/.git" ]] && command -v git &>/dev/null; then
-    echo "[MECA] Actualizando repositorio Meca HyprConfig..."
+    echo "[MECA] Comprobando actualizaciones de Meca HyprConfig..."
     git -C "$REPO_DIR" pull --ff-only 2>/dev/null || true
 fi
-
-# Re-asegurar tecla Bloq Mayús
 if command -v meca &>/dev/null; then
     meca --fix-caps &>/dev/null || true
 fi
-
 exit 0
 """
         try:
             hook_file.write_text(hook_content, encoding="utf-8")
             hook_file.chmod(0o755)
-            self.set_status("✓ Hook instalado en ~/.config/omarchy/hooks/post-update.d/99-meca-hyprconfig.sh.")
+            self.status_message = "✓ Hook instalado en ~/.config/omarchy/hooks/post-update.d/99-meca-hyprconfig.sh."
         except Exception:
-            self.set_status("Error al crear el hook de actualización.")
+            self.status_message = "Error al instalar el hook."
