@@ -78,15 +78,25 @@ meca
 ```
 *O búscalo como **Meca HyprConfig** en el menú de aplicaciones.*
 
-#### Atajos de Teclado en el Panel:
+#### Navegación y Atajos en el Panel:
+
+- **🖱️ Interacción con Ratón:**
+  - **Clic en la barra lateral:** Cambia de categoría/sección instantáneamente.
+  - **Clic en steppers `[ - ]` y `[ + ]`:** Incrementa o disminuye el valor.
+  - **Clic en conmutadores `[ ■ ] ON` / `[   ] off`:** Activa o desactiva la opción.
+  - **Clic en selectores `[ <opción> v ]`:** Cicla entre las opciones disponibles.
+  - **Arrastre en sliders:** Ajusta el nivel arrastrando el puntero sobre la barra.
+  - **Rueda del ratón (Scroll):** Desplaza secciones o calibra valores numéricos.
+  - **Clic en botones inferiores:** `[s]: Guardar` o `[q]: Salir`.
+
+- **⌨️ Teclado:**
 | Tecla | Acción |
 |---|---|
-| `Tab` / `Shift + Tab` | Cambiar entre las 6 pestañas |
-| `1` a `6` | Ir directamente a una pestaña específica |
-| `↑` / `↓` | Seleccionar opción o control |
-| `←` / `→` | Ajustar valor (gaps, rounding, border, temas, escala) |
-| `Enter` | Activar opción, cambiar tema o aplicar cambios |
-| `s` | Guardar toda la configuración y aplicar en caliente |
+| `Tab` / `Shift + Tab` | Alternar foco entre Sidebar y Panel de Ajustes |
+| `↑` / `↓` | Seleccionar categoría u opción |
+| `←` / `→` | Ajustar valor (gaps, rounding, border, opacidad, escala) |
+| `Enter` o `Espacio` | Activar opción, cambiar tema o ejecutar acción |
+| `s` | Guardar configuración y aplicar en caliente |
 | `q` o `Esc` | Salir del panel |
 
 ### 2. Comandos CLI Directos
