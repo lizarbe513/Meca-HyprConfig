@@ -7,6 +7,7 @@ inspirado en los widgets nativos de Omarchy.
 from __future__ import annotations
 import os
 import sys
+import re
 import tty
 import termios
 import select
@@ -90,6 +91,10 @@ class MecaTUI:
         # Escalas soportadas para monitores
         self.scales = ["1x", "1.25x", "1.5x", "1.75x", "2x"]
         self.scale_values = [1.0, 1.25, 1.5, 1.75, 2.0]
+
+        # Mapeos de coordenadas para interacción con el ratón
+        self._sidebar_click_map: Dict[int, int] = {}
+        self._content_click_map: Dict[int, Dict[str, Any]] = {}
 
         # Inicializar definiciones de variables por sección
         self.section_items = self._init_section_items()
@@ -188,15 +193,16 @@ class MecaTUI:
 
         try:
             tty.setraw(fd)
-            # Alternate screen buffer, ocultar cursor
-            sys.stdout.write("\033[?1049h\033[?25l")
+            # Alternate screen buffer, ocultar cursor y habilitar ratón SGR (1000, 1002, 1006)
+            sys.stdout.write("\033[?1049h\033[?25l\033[?1000h\033[?1002h\033[?1006h")
             sys.stdout.flush()
 
             while self.running:
                 self.render()
                 self.handle_input(fd)
         finally:
-            sys.stdout.write("\033[?25h\033[?1049l\033[0m")
+            # Deshabilitar ratón, mostrar cursor y salir de alternate buffer
+            sys.stdout.write("\033[?1006l\033[?1002l\033[?1000l\033[?25h\033[?1049l\033[0m")
             sys.stdout.flush()
             if self.orig_termios:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.orig_termios)
@@ -245,6 +251,7 @@ class MecaTUI:
     def _render_sidebar(self, width: int, max_rows: int) -> List[str]:
         lines: List[str] = []
         current_cat = None
+        self._sidebar_click_map.clear()
 
         for idx, (cat, sec_id, icon, title, desc) in enumerate(self.SECTIONS):
             # Encabezado de Categoría en mayúsculas
@@ -254,6 +261,10 @@ class MecaTUI:
 
             is_sel = (idx == self.current_section_idx)
             is_active_pane = (self.active_pane == "sidebar")
+
+            # Mapear fila de pantalla (1-indexed: row 1 es header, luego líneas de sidebar)
+            screen_row = 2 + len(lines)
+            self._sidebar_click_map[screen_row] = idx
 
             # Iconos SOLO en el sidebar izquierdo, sin emojis
             item_text = f" {icon} {title}".ljust(width)
@@ -282,6 +293,7 @@ class MecaTUI:
         sec_id = sec_meta[1]
         sec_title = sec_meta[3]
         sec_desc = sec_meta[4]
+        self._content_click_map.clear()
 
         # Encabezado de la Sección Activa
         lines.append(" " + self.theme_engine.style("bright_foreground", None, sec_title.upper(), bold=True))
@@ -290,6 +302,7 @@ class MecaTUI:
 
         items = self.section_items.get(sec_id, [])
         is_active_pane = (self.active_pane == "content")
+        sidebar_w = 26
 
         for i, item in enumerate(items):
             is_sel = (i == self.selected_item_idx and is_active_pane)
@@ -298,6 +311,22 @@ class MecaTUI:
             # Nombre y descripción
             title_part = f"  {item.name}"
             space_middle = max(2, width - len(title_part) - len(val_str) - 3)
+
+            # Calcular coordenadas absolutas de la fila y el control
+            item_screen_row = 2 + len(lines)
+            control_x_start = 1 + sidebar_w + 1 + 1 + len(title_part) + space_middle
+            control_x_end = control_x_start + len(val_str)
+
+            click_info = {
+                "item_idx": i,
+                "item": item,
+                "control_range": (control_x_start, control_x_end),
+                "minus_range": (control_x_start, control_x_start + 5),
+                "plus_range": (control_x_end - 5, control_x_end),
+                "slider_range": (control_x_start, control_x_start + 11),
+            }
+            self._content_click_map[item_screen_row] = click_info
+            self._content_click_map[item_screen_row + 1] = click_info  # clic en descripción también selecciona
 
             if is_sel:
                 # Fila seleccionada con caja rectangular sobria (Estilo Omarchy Widget)
@@ -442,7 +471,7 @@ class MecaTUI:
         return self.settings.get(key, "-")
 
     # ==========================
-    # MANEJO DE ENTRADA Y TECLADO
+    # MANEJO DE ENTRADA Y RATÓN
     # ==========================
 
     def handle_input(self, fd: int) -> None:
@@ -450,8 +479,19 @@ class MecaTUI:
         if not r:
             return
 
-        ch = os.read(fd, 32)
+        ch = os.read(fd, 128)
         if not ch:
+            return
+
+        # Comprobar secuencias de ratón en formato extendido SGR (\x1b[<btn;x;yM/m)
+        mouse_matches = list(re.finditer(b"\x1b\\[<(\\d+);(\\d+);(\\d+)([Mm])", ch))
+        if mouse_matches:
+            for m in mouse_matches:
+                btn = int(m.group(1))
+                x = int(m.group(2))
+                y = int(m.group(3))
+                act = m.group(4)
+                self._handle_mouse_event(btn, x, y, act)
             return
 
         # Salir con q o Esc
@@ -510,6 +550,126 @@ class MecaTUI:
             else:
                 self._activate_current_item()
             return
+
+    def _handle_mouse_event(self, btn: int, x: int, y: int, act: bytes) -> None:
+        """Procesa clics, arrastres y rueda del ratón."""
+        cols, rows = shutil.get_terminal_size((90, 26))
+        sidebar_w = 26
+
+        if act == b"M":
+            # 1. Clic Izquierdo (btn == 0)
+            if btn == 0:
+                # Clic en barra de título superior
+                if y == 1:
+                    if x >= cols - 12:  # Botón "q: Salir"
+                        self.running = False
+                    return
+
+                # Clic en barra inferior de estado
+                if y == rows:
+                    if x >= cols - 24 and x <= cols - 12:  # "[s]: Guardar"
+                        self.save_all()
+                    elif x > cols - 12:  # "[q]: Salir"
+                        self.running = False
+                    elif x <= 24:  # "[Tab]: Cambiar foco"
+                        self.active_pane = "content" if self.active_pane == "sidebar" else "sidebar"
+                    return
+
+                # Clic en barra lateral izquierda (Sidebar)
+                if x <= sidebar_w:
+                    sec_idx = self._sidebar_click_map.get(y)
+                    if sec_idx is not None:
+                        self.current_section_idx = sec_idx
+                        self.selected_item_idx = 0
+                        self.active_pane = "content"
+                    return
+
+                # Clic en panel de contenido (Content)
+                if x > sidebar_w + 1:
+                    info = self._content_click_map.get(y)
+                    if info:
+                        self.active_pane = "content"
+                        self.selected_item_idx = info["item_idx"]
+                        item = info["item"]
+
+                        if item.item_type == "stepper":
+                            m_start, m_end = info["minus_range"]
+                            p_start, p_end = info["plus_range"]
+                            if m_start <= x <= m_end:
+                                self._adjust_current_item(delta=-1)
+                            elif p_start <= x <= p_end:
+                                self._adjust_current_item(delta=1)
+
+                        elif item.item_type == "toggle":
+                            self._activate_current_item()
+
+                        elif item.item_type == "select":
+                            self._adjust_current_item(delta=1)
+
+                        elif item.item_type == "slider":
+                            s_start, s_end = info["slider_range"]
+                            if s_start <= x <= s_end:
+                                ratio = (x - s_start) / max(1, s_end - s_start)
+                                ratio = max(0.0, min(1.0, ratio))
+                                new_val = item.min_val + ratio * (item.max_val - item.min_val)
+                                if isinstance(item.step, int) or (isinstance(item.min_val, int) and isinstance(item.max_val, int)):
+                                    new_val = round(new_val)
+                                else:
+                                    new_val = round(new_val, 2)
+                                new_val = max(item.min_val, min(item.max_val, new_val))
+                                self._set_item_value(item.key, new_val)
+                                self._apply_hyprctl_live(item.key, new_val)
+
+                        elif item.item_type == "action":
+                            c_start, c_end = info["control_range"]
+                            if c_start <= x <= c_end:
+                                self._activate_current_item()
+
+            # 2. Arrastre con clic izquierdo sostenido (btn == 32)
+            elif btn == 32:
+                if x > sidebar_w + 1:
+                    info = self._content_click_map.get(y)
+                    if info and info["item"].item_type == "slider":
+                        item = info["item"]
+                        s_start, s_end = info["slider_range"]
+                        ratio = (x - s_start) / max(1, s_end - s_start)
+                        ratio = max(0.0, min(1.0, ratio))
+                        new_val = item.min_val + ratio * (item.max_val - item.min_val)
+                        if isinstance(item.step, int) or (isinstance(item.min_val, int) and isinstance(item.max_val, int)):
+                            new_val = round(new_val)
+                        else:
+                            new_val = round(new_val, 2)
+                        new_val = max(item.min_val, min(item.max_val, new_val))
+                        self._set_item_value(item.key, new_val)
+                        self._apply_hyprctl_live(item.key, new_val)
+
+            # 3. Rueda del ratón hacia arriba (Scroll Up: btn == 64)
+            elif btn == 64:
+                if x <= sidebar_w:
+                    self.current_section_idx = max(0, self.current_section_idx - 1)
+                    self.selected_item_idx = 0
+                else:
+                    info = self._content_click_map.get(y)
+                    if info and info["item"].item_type in ("stepper", "slider"):
+                        self.selected_item_idx = info["item_idx"]
+                        self._adjust_current_item(delta=1)
+                    else:
+                        self.selected_item_idx = max(0, self.selected_item_idx - 1)
+
+            # 4. Rueda del ratón hacia abajo (Scroll Down: btn == 65)
+            elif btn == 65:
+                if x <= sidebar_w:
+                    self.current_section_idx = min(len(self.SECTIONS) - 1, self.current_section_idx + 1)
+                    self.selected_item_idx = 0
+                else:
+                    info = self._content_click_map.get(y)
+                    if info and info["item"].item_type in ("stepper", "slider"):
+                        self.selected_item_idx = info["item_idx"]
+                        self._adjust_current_item(delta=-1)
+                    else:
+                        sec_id = self.SECTIONS[self.current_section_idx][1]
+                        items_len = len(self.section_items.get(sec_id, []))
+                        self.selected_item_idx = min(items_len - 1, self.selected_item_idx + 1)
 
     def _adjust_current_item(self, delta: int) -> None:
         """Modifica el valor del elemento seleccionado con flechas izquierda/derecha."""
