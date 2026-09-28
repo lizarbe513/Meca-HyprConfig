@@ -92,9 +92,14 @@ class MecaTUI:
         self.scales = ["1x", "1.25x", "1.5x", "1.75x", "2x"]
         self.scale_values = [1.0, 1.25, 1.5, 1.75, 2.0]
 
+        # Copia de seguridad inicial para permitir cancelación/reversión
+        self.original_settings = dict(self.settings)
+
         # Mapeos de coordenadas para interacción con el ratón
         self._sidebar_click_map: Dict[int, int] = {}
         self._content_click_map: Dict[int, Dict[str, Any]] = {}
+        self._button_click_map: Dict[str, Tuple[int, int]] = {}
+        self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar, 2: Guardar
 
         # Inicializar definiciones de variables por sección
         self.section_items = self._init_section_items()
@@ -227,7 +232,7 @@ class MecaTUI:
         buf.append(self.theme_engine.style("bright_foreground", "accent", title_right) + "\r\n")
 
         # 2. Render de Cuerpo Dividido (Sidebar + Content)
-        body_rows = rows - 3  # Menos header y footer
+        body_rows = rows - 3  # Menos header, barra de botones y barra de estado
         sidebar_lines = self._render_sidebar(sidebar_w, body_rows)
         content_lines = self._render_content(content_w, body_rows)
 
@@ -237,9 +242,54 @@ class MecaTUI:
             c_line = content_lines[r] if r < len(content_lines) else ""
             buf.append(s_line + self.theme_engine.fg("muted", sep_char) + c_line + "\033[K\r\n")
 
-        # 3. Barra Inferior de Estado (Sobria, Cuadrada)
+        # 3. Fila de Botones Físicos (Restablecer, Cancelar, Guardar)
+        self._button_click_map.clear()
+        btn_reset_text = " [ Restablecer (r) ] "
+        btn_cancel_text = " [ Cancelar (c) ] "
+        btn_save_text = " [ Guardar (s) ] "
+
+        is_btn_pane = (self.active_pane == "buttons")
+
+        if is_btn_pane and self.selected_button_idx == 0:
+            btn_reset_styled = self.theme_engine.style("bright_foreground", "selection", btn_reset_text, bold=True)
+        else:
+            btn_reset_styled = self.theme_engine.style("foreground", "muted", btn_reset_text)
+
+        if is_btn_pane and self.selected_button_idx == 1:
+            btn_cancel_styled = self.theme_engine.style("bright_foreground", "selection", btn_cancel_text, bold=True)
+        else:
+            btn_cancel_styled = self.theme_engine.style("foreground", "muted", btn_cancel_text)
+
+        if is_btn_pane and self.selected_button_idx == 2:
+            btn_save_styled = self.theme_engine.style("bright_foreground", "selection", btn_save_text, bold=True)
+        else:
+            btn_save_styled = self.theme_engine.style("bright_foreground", "accent", btn_save_text, bold=True)
+
+        config_label = "  Config: ~/.config/hypr/hyprland-gui.lua"
+        buttons_raw_w = len(btn_reset_text) + 1 + len(btn_cancel_text) + 1 + len(btn_save_text)
+        mid_space = max(2, cols - len(config_label) - buttons_raw_w - 1)
+
+        # Coordenadas X para clics de ratón
+        reset_x_start = len(config_label) + mid_space + 1
+        reset_x_end = reset_x_start + len(btn_reset_text)
+
+        cancel_x_start = reset_x_end + 1
+        cancel_x_end = cancel_x_start + len(btn_cancel_text)
+
+        save_x_start = cancel_x_end + 1
+        save_x_end = save_x_start + len(btn_save_text)
+
+        self._button_click_map["reset"] = (reset_x_start, reset_x_end)
+        self._button_click_map["cancel"] = (cancel_x_start, cancel_x_end)
+        self._button_click_map["save"] = (save_x_start, save_x_end)
+
+        buf.append(self.theme_engine.fg("muted", config_label))
+        buf.append(" " * mid_space)
+        buf.append(btn_reset_styled + " " + btn_cancel_styled + " " + btn_save_styled + "\033[K\r\n")
+
+        # 4. Barra Inferior de Estado (Sobria, Cuadrada)
         status_txt = f" {self.status_message}"
-        keys_hint = " [Tab]: Cambiar foco | [↑/↓]: Mover | [←/→]: Ajustar | [s]: Guardar | [q]: Salir "
+        keys_hint = " [Tab]: Foco | [r]: Restablecer | [c]: Cancelar | [s]: Guardar | [q]: Salir "
         footer_space = max(0, cols - len(status_txt) - len(keys_hint))
         buf.append(self.theme_engine.style("bright_foreground", "muted", status_txt))
         buf.append(self.theme_engine.style("bright_foreground", "muted", " " * footer_space))
@@ -499,26 +549,41 @@ class MecaTUI:
             self.running = False
             return
 
-        # Cambiar foco con Tab, Shift+Tab o h / l
-        if ch in (b"\t", b"\x1b[Z"):
-            self.active_pane = "content" if self.active_pane == "sidebar" else "sidebar"
-            return
-
-        # Guardar rápido con 's'
+        # Atajos rápidos físicos directos
         if ch in (b"s", b"S"):
             self.save_all()
             return
+        if ch in (b"c", b"C"):
+            self.cancel_changes()
+            return
+        if ch in (b"r", b"R"):
+            self.reset_to_defaults()
+            return
 
-        # Navegación izquierda/derecha entre columnas
+        # Cambiar foco con Tab
+        if ch in (b"\t", b"\x1b[Z"):
+            if self.active_pane == "sidebar":
+                self.active_pane = "content"
+            elif self.active_pane == "content":
+                self.active_pane = "buttons"
+            else:
+                self.active_pane = "sidebar"
+            return
+
+        # Navegación izquierda/derecha
         if ch == b"\x1b[D":  # Flecha Izquierda
-            if self.active_pane == "content":
+            if self.active_pane == "buttons":
+                self.selected_button_idx = max(0, self.selected_button_idx - 1)
+            elif self.active_pane == "content":
                 self._adjust_current_item(delta=-1)
             else:
                 self.active_pane = "sidebar"
             return
 
         if ch == b"\x1b[C":  # Flecha Derecha
-            if self.active_pane == "content":
+            if self.active_pane == "buttons":
+                self.selected_button_idx = min(2, self.selected_button_idx + 1)
+            elif self.active_pane == "content":
                 self._adjust_current_item(delta=1)
             else:
                 self.active_pane = "content"
@@ -526,7 +591,9 @@ class MecaTUI:
 
         # Navegación vertical arriba/abajo
         if ch == b"\x1b[A":  # Flecha Arriba
-            if self.active_pane == "sidebar":
+            if self.active_pane == "buttons":
+                self.active_pane = "content"
+            elif self.active_pane == "sidebar":
                 self.current_section_idx = max(0, self.current_section_idx - 1)
                 self.selected_item_idx = 0
             else:
@@ -537,16 +604,27 @@ class MecaTUI:
             if self.active_pane == "sidebar":
                 self.current_section_idx = min(len(self.SECTIONS) - 1, self.current_section_idx + 1)
                 self.selected_item_idx = 0
-            else:
+            elif self.active_pane == "content":
                 sec_id = self.SECTIONS[self.current_section_idx][1]
                 items_len = len(self.section_items.get(sec_id, []))
-                self.selected_item_idx = min(items_len - 1, self.selected_item_idx + 1)
+                if self.selected_item_idx >= items_len - 1:
+                    self.active_pane = "buttons"
+                    self.selected_button_idx = 2
+                else:
+                    self.selected_item_idx += 1
             return
 
         # Enter o Espacio para activar/conmutar
         if ch in (b"\r", b"\n", b" "):
             if self.active_pane == "sidebar":
                 self.active_pane = "content"
+            elif self.active_pane == "buttons":
+                if self.selected_button_idx == 0:
+                    self.reset_to_defaults()
+                elif self.selected_button_idx == 1:
+                    self.cancel_changes()
+                elif self.selected_button_idx == 2:
+                    self.save_all()
             else:
                 self._activate_current_item()
             return
@@ -565,14 +643,37 @@ class MecaTUI:
                         self.running = False
                     return
 
-                # Clic en barra inferior de estado
-                if y == rows:
-                    if x >= cols - 24 and x <= cols - 12:  # "[s]: Guardar"
+                # Clic en la fila física de botones (rows - 1)
+                if y == rows - 1:
+                    reset_r = self._button_click_map.get("reset")
+                    cancel_r = self._button_click_map.get("cancel")
+                    save_r = self._button_click_map.get("save")
+
+                    if reset_r and reset_r[0] <= x <= reset_r[1]:
+                        self.active_pane = "buttons"
+                        self.selected_button_idx = 0
+                        self.reset_to_defaults()
+                    elif cancel_r and cancel_r[0] <= x <= cancel_r[1]:
+                        self.active_pane = "buttons"
+                        self.selected_button_idx = 1
+                        self.cancel_changes()
+                    elif save_r and save_r[0] <= x <= save_r[1]:
+                        self.active_pane = "buttons"
+                        self.selected_button_idx = 2
                         self.save_all()
-                    elif x > cols - 12:  # "[q]: Salir"
+                    return
+
+                # Clic en barra inferior de estado (rows)
+                if y == rows:
+                    if x > cols - 12:  # "[q]: Salir"
                         self.running = False
-                    elif x <= 24:  # "[Tab]: Cambiar foco"
-                        self.active_pane = "content" if self.active_pane == "sidebar" else "sidebar"
+                    elif x <= 16:  # "[Tab]: Foco"
+                        if self.active_pane == "sidebar":
+                            self.active_pane = "content"
+                        elif self.active_pane == "content":
+                            self.active_pane = "buttons"
+                        else:
+                            self.active_pane = "sidebar"
                     return
 
                 # Clic en barra lateral izquierda (Sidebar)
@@ -812,9 +913,44 @@ class MecaTUI:
         """Guarda todas las opciones en hyprland-gui.lua y aplica live."""
         ok = self.config_sync.save_gui_settings(self.settings, apply_live=True)
         if ok:
-            self.status_message = "✓ Ajustes guardados en ~/.config/hypr/hyprland-gui.lua."
+            self.original_settings = dict(self.settings)
+            self.status_message = "✓ Ajustes guardados en ~/.config/hypr/hyprland-gui.lua y aplicados en vivo."
         else:
             self.status_message = "Error al guardar configuración."
+
+    def cancel_changes(self) -> None:
+        """Revierte todos los cambios al estado que tenían al abrir la aplicación."""
+        self.settings = dict(self.original_settings)
+        self.config_sync.save_gui_settings(self.settings, apply_live=True)
+        self.status_message = "✓ Cambios cancelados y revertidos al estado inicial."
+
+    def reset_to_defaults(self) -> None:
+        """Restablece los ajustes a los valores por defecto oficiales de Omarchy y Hyprland."""
+        defaults = {
+            "gaps_in": 5,
+            "gaps_out": 10,
+            "border_size": 2,
+            "rounding": 0,
+            "dim_inactive": False,
+            "dim_strength": 0.15,
+            "active_opacity": 1.0,
+            "inactive_opacity": 0.95,
+            "blur_enabled": True,
+            "blur_size": 5,
+            "blur_passes": 2,
+            "shadow_enabled": True,
+            "animations_enabled": True,
+            "animation_preset": "smooth",
+            "sensitivity": 0.0,
+            "accel_profile": "flat",
+            "natural_scroll": False,
+            "layout": "dwindle",
+            "compose_key": "ralt",
+            "snap_enabled": False,
+        }
+        self.settings.update(defaults)
+        self.config_sync.save_gui_settings(self.settings, apply_live=True)
+        self.status_message = "✓ Ajustes restablecidos a los valores predeterminados de Omarchy."
 
     def install_update_hook(self) -> None:
         hook_dir = Path.home() / ".config" / "omarchy" / "hooks" / "post-update.d"

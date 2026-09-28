@@ -78,25 +78,32 @@ meca
 ```
 *O búscalo como **Meca HyprConfig** en el menú de aplicaciones.*
 
-#### Navegación y Atajos en el Panel:
+#### Botones Físicos de Acción y Navegación:
+
+- **🔘 Botones Físicos en Pantalla:**
+  - **`[ Restablecer (r) ]`:** Restaura inmediatamente todos los valores a los valores predeterminados de Omarchy / Hyprland.
+  - **`[ Cancelar (c) ]`:** Revierte cualquier cambio no guardado al estado en que se abrió la aplicación.
+  - **`[ Guardar (s) ]`:** Escribe la configuración en `~/.config/hypr/hyprland-gui.lua` y la aplica en vivo a Hyprland.
 
 - **🖱️ Interacción con Ratón:**
+  - **Clic en botones físicos:** Haz clic directamente sobre `[ Restablecer ]`, `[ Cancelar ]` o `[ Guardar ]`.
   - **Clic en la barra lateral:** Cambia de categoría/sección instantáneamente.
   - **Clic en steppers `[ - ]` y `[ + ]`:** Incrementa o disminuye el valor.
   - **Clic en conmutadores `[ ■ ] ON` / `[   ] off`:** Activa o desactiva la opción.
   - **Clic en selectores `[ <opción> v ]`:** Cicla entre las opciones disponibles.
   - **Arrastre en sliders:** Ajusta el nivel arrastrando el puntero sobre la barra.
   - **Rueda del ratón (Scroll):** Desplaza secciones o calibra valores numéricos.
-  - **Clic en botones inferiores:** `[s]: Guardar` o `[q]: Salir`.
 
 - **⌨️ Teclado:**
 | Tecla | Acción |
 |---|---|
-| `Tab` / `Shift + Tab` | Alternar foco entre Sidebar y Panel de Ajustes |
+| `Tab` | Alternar foco entre Sidebar, Panel de Ajustes y Botones Físicos |
 | `↑` / `↓` | Seleccionar categoría u opción |
-| `←` / `→` | Ajustar valor (gaps, rounding, border, opacidad, escala) |
-| `Enter` o `Espacio` | Activar opción, cambiar tema o ejecutar acción |
+| `←` / `→` | Ajustar valor / navegar entre botones |
+| `Enter` o `Espacio` | Activar opción o pulsar el botón seleccionado |
 | `s` | Guardar configuración y aplicar en caliente |
+| `c` | Cancelar cambios y revertir |
+| `r` | Restablecer a valores por defecto de Omarchy |
 | `q` o `Esc` | Salir del panel |
 
 ### 2. Comandos CLI Directos
