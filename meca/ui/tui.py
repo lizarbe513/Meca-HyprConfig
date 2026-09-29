@@ -275,6 +275,12 @@ class MecaTUI:
                 "action",
             ),
             SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Despliega la lista completa de temas para activar cualquiera", "select", options=themes),
+            SectionItem(
+                "header:edit_current_theme",
+                f"OPCIONES DE EDICION DEL TEMA ACTUAL ({self.theme_engine.current_theme.upper()})",
+                "Edita colores, modo e iconos del tema activo y su carpeta original",
+                "header",
+            ),
             SectionItem("omarchy:theme_mode", "Modo del tema (dark / light)", "Edita el modo en el tema actual y en el original", "select", options=["dark", "light"]),
             SectionItem("omarchy:theme_accent", "Color de acento (Accent)", "Edita el color de acento en el tema actual y original", "select", options=accent_opts),
             SectionItem("omarchy:theme_bg", "Color de fondo (Background)", "Edita el color de fondo en el tema actual y original", "select", options=bg_opts),
