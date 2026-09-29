@@ -61,7 +61,7 @@ class ConfigSync:
             "workspace_swipe": True,
             "workspace_count": 5,
             "workspace_layout": "dwindle",
-            "dwindle_pseudotile": True,
+            "dwindle_force_split": 2,
             "dwindle_preserve_split": True,
             "dwindle_smart_split": False,
             "master_new_status": "slave",
@@ -79,6 +79,7 @@ class ConfigSync:
             "cursor:inactive_timeout": "cursor_timeout",
             "input:repeat_rate": "repeat_rate",
             "input:repeat_delay": "repeat_delay",
+            "dwindle:force_split": "dwindle_force_split",
         }
         for hypr_k, s_k in live_int_map.items():
             val = HyprIPC.get_option(hypr_k)
@@ -99,7 +100,6 @@ class ConfigSync:
             "input:touchpad:clickfinger_behavior": "clickfinger",
             "input:touchpad:tap-to-click": "tap_to_click",
             "input:touchpad:disable_while_typing": "disable_typing",
-            "dwindle:pseudotile": "dwindle_pseudotile",
             "dwindle:preserve_split": "dwindle_preserve_split",
             "dwindle:smart_split": "dwindle_smart_split",
         }
@@ -218,12 +218,12 @@ hl.config({{
     touchpad = {{
       natural_scroll = {b(settings.get('natural_scroll', False))},
       clickfinger_behavior = {b(settings.get('clickfinger', True))},
-      ["tap-to-click"] = {b(settings.get('tap_to_click', True))},
+      tap_to_click = {b(settings.get('tap_to_click', True))},
       disable_while_typing = {b(settings.get('disable_typing', True))},
     }},
   }},
   dwindle = {{
-    pseudotile = {b(settings.get('dwindle_pseudotile', True))},
+    force_split = {int(settings.get('dwindle_force_split', 2))},
     preserve_split = {b(settings.get('dwindle_preserve_split', True))},
     smart_split = {b(settings.get('dwindle_smart_split', False))},
   }},
@@ -279,9 +279,9 @@ end
                     ("input:accel_profile", settings.get("accel_profile", "flat")),
                     ("input:touchpad:natural_scroll", settings.get("natural_scroll", False)),
                     ("input:touchpad:clickfinger_behavior", settings.get("clickfinger", True)),
-                    ("input:touchpad:tap-to-click", settings.get("tap_to_click", True)),
+                    ("input:touchpad:tap_to_click", settings.get("tap_to_click", True)),
                     ("input:touchpad:disable_while_typing", settings.get("disable_typing", True)),
-                    ("dwindle:pseudotile", settings.get("dwindle_pseudotile", True)),
+                    ("dwindle:force_split", settings.get("dwindle_force_split", 2)),
                     ("dwindle:preserve_split", settings.get("dwindle_preserve_split", True)),
                     ("dwindle:smart_split", settings.get("dwindle_smart_split", False)),
                     ("master:new_status", settings.get("master_new_status", "slave")),

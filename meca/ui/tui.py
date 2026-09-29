@@ -114,12 +114,17 @@ class MecaTUI:
         self.modal_hex_target: str = "accent"  # "accent" | "background" | "foreground" | "selection"
         self._modal_kind_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
 
-        # Mapeos de coordenadas para interacción con el ratón
+        # Mapeos de coordenadas para interacción con el ratón y estado hover (pasar el cursor)
         self._sidebar_click_map: Dict[int, int] = {}
         self._content_click_map: Dict[int, Dict[str, Any]] = {}
         self._button_click_map: Dict[str, Tuple[int, int]] = {}
         self._button_row_range: Tuple[int, int] = (0, 0)
         self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar, 2: Aplicar
+        self.hover_sidebar_idx: Optional[int] = None
+        self.hover_item_idx: Optional[int] = None
+        self.hover_subcontrol: Optional[str] = None
+        self.hover_button_key: Optional[str] = None
+        self.hover_modal_btn_idx: Optional[int] = None
 
         # Inicializar definiciones de variables por sección
         self.section_items = self._init_section_items()
@@ -239,7 +244,7 @@ class MecaTUI:
                 SectionItem("workspace:layout_toggle", "Workspace layout", "Alternar entre modo dwindle o modo niri (scrolling)", "select", options=["dwindle", "scrolling"]),
             ],
             "layouts": [
-                SectionItem("dwindle:pseudotile", "Dwindle pseudotile", "Permite que ventanas de mosaico mantengan tamaño original", "toggle"),
+                SectionItem("dwindle:force_split", "Force split", "Dirección de división (0=ratón, 1=izq/arriba, 2=der/abajo)", "stepper", 0, 2, 1),
                 SectionItem("dwindle:preserve_split", "Preserve split", "Mantiene la dirección de división al cerrar ventanas", "toggle"),
                 SectionItem("dwindle:smart_split", "Smart split", "Determina división según posición del cursor", "toggle"),
                 SectionItem("master:new_status", "Master new status", "Ubicación de ventanas recién creadas (master / slave)", "select", options=["master", "slave"]),
@@ -280,16 +285,16 @@ class MecaTUI:
 
         try:
             tty.setraw(fd)
-            # Alternate screen buffer, ocultar cursor, desactivar auto-wrap (?7l) y habilitar ratón SGR
-            sys.stdout.write("\033[?1049h\033[?25l\033[?7l\033[?1000h\033[?1002h\033[?1006h\033[2J")
+            # Alternate screen buffer, ocultar cursor, desactivar auto-wrap (?7l) y habilitar ratón SGR con hover (?1003h)
+            sys.stdout.write("\033[?1049h\033[?25l\033[?7l\033[?1000h\033[?1002h\033[?1003h\033[?1006h\033[2J")
             sys.stdout.flush()
 
             while self.running:
                 self.render()
                 self.handle_input(fd)
         finally:
-            # Deshabilitar ratón, reactivar auto-wrap (?7h), mostrar cursor y salir de alternate buffer
-            sys.stdout.write("\033[?1006l\033[?1002l\033[?1000l\033[?7h\033[?25h\033[?1049l\033[0m")
+            # Deshabilitar ratón y hover, reactivar auto-wrap (?7h), mostrar cursor y salir de alternate buffer
+            sys.stdout.write("\033[?1006l\033[?1003l\033[?1002l\033[?1000l\033[?7h\033[?25h\033[?1049l\033[0m")
             sys.stdout.flush()
             if self.orig_termios:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.orig_termios)
@@ -374,16 +379,20 @@ class MecaTUI:
                 break
 
             is_sel = (idx == self.current_section_idx)
+            is_hover = (idx == self.hover_sidebar_idx and not self.modal_state)
             is_active_pane = (self.active_pane == "sidebar" and not self.modal_state)
 
             screen_row = 2 + len(lines)
             self._sidebar_click_map[screen_row] = idx
 
-            item_text = f"  {icon}  {title}".ljust(width)[:width]
+            prefix = " ▸" if is_hover else "  "
+            item_text = f"{prefix}{icon}  {title}".ljust(width)[:width]
 
-            if is_sel and is_active_pane:
+            if is_sel and (is_active_pane or is_hover):
                 line = self.theme_engine.style("bright_foreground", "selection", item_text, bold=True)
             elif is_sel:
+                line = self.theme_engine.style("bright_foreground", "muted", item_text, bold=True)
+            elif is_hover:
                 line = self.theme_engine.style("bright_foreground", "muted", item_text, bold=True)
             else:
                 line = self.theme_engine.style("foreground", None, item_text)
@@ -436,9 +445,11 @@ class MecaTUI:
 
         for i in range(self.content_scroll_offset, visible_end):
             item = items[i]
-            is_sel = (i == self.selected_item_idx and is_active_pane)
+            is_hover_row = (i == self.hover_item_idx and not self.modal_state)
+            is_sel = (i == self.selected_item_idx and is_active_pane) or is_hover_row
+            hover_sub = self.hover_subcontrol if is_hover_row else None
 
-            c_top, c_mid, c_bot, ctrl_vis_w = self._format_item_control_3lines(item, is_sel)
+            c_top, c_mid, c_bot, ctrl_vis_w = self._format_item_control_3lines(item, is_sel, hover_sub)
             left_max_w = max(12, width - ctrl_vis_w - 3)
 
             item_screen_row = 2 + len(lines)
@@ -519,7 +530,8 @@ class MecaTUI:
         for btn_key, btn_idx, label in buttons_spec:
             inner_w = len(label)
             btn_w = inner_w + 2
-            is_sel = (is_btn_pane and self.selected_button_idx == btn_idx)
+            is_hover_btn = (self.hover_button_key == btn_key and not self.modal_state)
+            is_sel = (is_btn_pane and self.selected_button_idx == btn_idx) or is_hover_btn
             is_primary = (btn_key == "save")
 
             abs_x_start = content_start_x + cur_rel_x
@@ -533,7 +545,9 @@ class MecaTUI:
 
             left_edge = self.theme_engine.style(bevel_col, None, "┃", bold=True)
             right_edge = self.theme_engine.style(border_col, None, "│", bold=(is_sel or is_primary))
-            if is_sel:
+            if is_hover_btn:
+                inner_styled = self.theme_engine.style("bright_foreground", "accent", label, bold=True)
+            elif is_sel:
                 inner_styled = self.theme_engine.style("bright_foreground", "selection", label, bold=True)
             elif is_primary:
                 inner_styled = self.theme_engine.style("bright_foreground", None, label, bold=True)
@@ -555,10 +569,15 @@ class MecaTUI:
             "".join(row2_parts),
         ]
 
-    def _format_item_control_3lines(self, item: SectionItem, is_sel: bool) -> Tuple[str, str, str, int]:
+    def _format_item_control_3lines(
+        self,
+        item: SectionItem,
+        is_sel: bool,
+        hover_sub: Optional[str] = None,
+    ) -> Tuple[str, str, str, int]:
         """
         Dibuja los controles del panel derecho usando cuadrados cerrados reales
-        de 3 líneas (┌───┐ / ┃ - │ / ┗━━━┙) en lugar de corchetes [ ].
+        de 3 líneas (┌───┐ / ┃ - │ / ┗━━━┙) en lugar de corchetes [ ], con respuesta al hover.
         """
         val = self._get_item_value(item)
         b_col = "bright_foreground" if is_sel else "foreground"
@@ -566,62 +585,77 @@ class MecaTUI:
 
         if item.item_type == "stepper":
             val_str = f"{str(val):^5}"[:5]
-            top_box = self.theme_engine.fg(b_col, "┌───┐")
-            bot_box = self.theme_engine.fg(sh_col, "┗━━━┙")
+            m_hov = (hover_sub == "minus")
+            p_hov = (hover_sub == "plus")
+
+            top_m = self.theme_engine.style("accent" if m_hov else b_col, None, "┌───┐", bold=m_hov)
+            top_p = self.theme_engine.style("accent" if p_hov else b_col, None, "┌───┐", bold=p_hov)
+            bot_m = self.theme_engine.style("accent" if m_hov else sh_col, None, "┗━━━┙", bold=True)
+            bot_p = self.theme_engine.style("accent" if p_hov else sh_col, None, "┗━━━┙", bold=True)
+
+            m_bg = "accent" if m_hov else ("selection" if is_sel else None)
+            p_bg = "accent" if p_hov else ("selection" if is_sel else None)
+
             m_mid = (
-                self.theme_engine.fg(sh_col, "┃")
-                + self.theme_engine.style("bright_foreground", "selection" if is_sel else None, " - ", bold=True)
+                self.theme_engine.fg("accent" if m_hov else sh_col, "┃")
+                + self.theme_engine.style("bright_foreground", m_bg, " - ", bold=True)
                 + self.theme_engine.fg(b_col, "│")
             )
             p_mid = (
-                self.theme_engine.fg(sh_col, "┃")
-                + self.theme_engine.style("bright_foreground", "selection" if is_sel else None, " + ", bold=True)
+                self.theme_engine.fg("accent" if p_hov else sh_col, "┃")
+                + self.theme_engine.style("bright_foreground", p_bg, " + ", bold=True)
                 + self.theme_engine.fg(b_col, "│")
             )
             val_mid = self.theme_engine.style("bright_foreground", None, val_str, bold=True)
 
-            c_top = f"{top_box}     {top_box}"
+            c_top = f"{top_m}     {top_p}"
             c_mid = f"{m_mid}{val_mid}{p_mid}"
-            c_bot = f"{bot_box}     {bot_box}"
+            c_bot = f"{bot_m}     {bot_p}"
             return c_top, c_mid, c_bot, 15
 
         elif item.item_type == "toggle":
             is_on = bool(val)
-            box_top = self.theme_engine.fg(b_col, "┌───┐") + "    "
+            c_hov = (hover_sub == "control")
+            box_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌───┐", bold=c_hov) + "    "
             mark = " ■ " if is_on else "   "
             state_lbl = " ON " if is_on else " off"
+            mark_bg = "accent" if c_hov else ("selection" if (is_sel or is_on) else None)
             mark_styled = self.theme_engine.style(
-                "bright_foreground" if is_on else "muted",
-                "selection" if (is_sel or is_on) else None,
+                "bright_foreground" if (is_on or c_hov) else "muted",
+                mark_bg,
                 mark,
-                bold=is_on,
+                bold=(is_on or c_hov),
             )
-            lbl_styled = self.theme_engine.style("bright_foreground" if is_on else "muted", None, state_lbl, bold=is_on)
+            lbl_styled = self.theme_engine.style("bright_foreground" if (is_on or c_hov) else "muted", None, state_lbl, bold=(is_on or c_hov))
             box_mid = (
-                self.theme_engine.fg(sh_col, "┃")
+                self.theme_engine.fg("accent" if c_hov else sh_col, "┃")
                 + mark_styled
                 + self.theme_engine.fg(b_col, "│")
                 + lbl_styled
             )
-            box_bot = self.theme_engine.fg(sh_col, "┗━━━┙") + "    "
+            box_bot = self.theme_engine.fg("accent" if c_hov else sh_col, "┗━━━┙") + "    "
             return box_top, box_mid, box_bot, 9
 
         elif item.item_type == "select":
             raw_lbl = f" {val} ▾ "
             inner_w = len(raw_lbl)
-            c_top = self.theme_engine.fg(b_col, "┌" + ("─" * inner_w) + "┐")
-            inner_s = self.theme_engine.style("bright_foreground", "selection" if is_sel else None, raw_lbl, bold=is_sel)
-            c_mid = self.theme_engine.fg(sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
-            c_bot = self.theme_engine.fg(sh_col, "┗" + ("━" * inner_w) + "┙")
+            c_hov = (hover_sub == "control")
+            c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
+            inner_bg = "accent" if c_hov else ("selection" if is_sel else None)
+            inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=(is_sel or c_hov))
+            c_mid = self.theme_engine.fg("accent" if c_hov else sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
+            c_bot = self.theme_engine.fg("accent" if c_hov else sh_col, "┗" + ("━" * inner_w) + "┙")
             return c_top, c_mid, c_bot, inner_w + 2
 
         elif item.item_type == "action":
             raw_lbl = " Ejecutar "
             inner_w = len(raw_lbl)
-            c_top = self.theme_engine.fg(b_col, "┌" + ("─" * inner_w) + "┐")
-            inner_s = self.theme_engine.style("bright_foreground", "selection" if is_sel else None, raw_lbl, bold=True)
-            c_mid = self.theme_engine.fg(sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
-            c_bot = self.theme_engine.fg(sh_col, "┗" + ("━" * inner_w) + "┙")
+            c_hov = (hover_sub == "control")
+            c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
+            inner_bg = "accent" if c_hov else ("selection" if is_sel else None)
+            inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=True)
+            c_mid = self.theme_engine.fg("accent" if c_hov else sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
+            c_bot = self.theme_engine.fg("accent" if c_hov else sh_col, "┗" + ("━" * inner_w) + "┙")
             return c_top, c_mid, c_bot, inner_w + 2
 
         elif item.item_type == "slider":
@@ -631,8 +665,9 @@ class MecaTUI:
             val_txt = f"{val:>5.2f}" if isinstance(val, float) else f"{str(val):>5}"
             raw_mid = f"{bar} {val_txt}"
             vis_w = len(raw_mid)
+            s_hov = (hover_sub == "slider")
             c_top = " " * vis_w
-            c_mid = self.theme_engine.style("bright_foreground" if is_sel else "foreground", None, raw_mid, bold=is_sel)
+            c_mid = self.theme_engine.style("accent" if s_hov else ("bright_foreground" if is_sel else "foreground"), None, raw_mid, bold=(is_sel or s_hov))
             c_bot = " " * vis_w
             return c_top, c_mid, c_bot, vis_w
 
@@ -886,7 +921,7 @@ class MecaTUI:
             "gestures:workspace_swipe": ("workspace_swipe", True),
             "workspace:count": ("workspace_count", 5),
             "workspace:layout_toggle": ("workspace_layout", "dwindle"),
-            "dwindle:pseudotile": ("dwindle_pseudotile", True),
+            "dwindle:force_split": ("dwindle_force_split", 0),
             "dwindle:preserve_split": ("dwindle_preserve_split", True),
             "dwindle:smart_split": ("dwindle_smart_split", False),
             "master:new_status": ("master_new_status", "slave"),
@@ -1033,7 +1068,7 @@ class MecaTUI:
         if not r:
             return
 
-        ch = os.read(fd, 128)
+        ch = os.read(fd, 4096)
         if not ch:
             return
 
@@ -1047,6 +1082,12 @@ class MecaTUI:
                 act = m.group(4)
                 self._handle_mouse_event(btn, x, y, act)
             return
+
+        # Al usar el teclado limpiamos los estados visuales de hover del ratón
+        self.hover_sidebar_idx = None
+        self.hover_item_idx = None
+        self.hover_subcontrol = None
+        self.hover_button_key = None
 
         # Si hay una ventana modal de entrada de texto activa (input_autostart o input_theme_hex)
         if self.modal_state in ("input_autostart", "input_theme_hex"):
@@ -1210,12 +1251,23 @@ class MecaTUI:
             self.modal_input_text = cur_map.get(self.modal_hex_target, "#E31B23")
 
     def _handle_mouse_event(self, btn: int, x: int, y: int, act: bytes) -> None:
-        """Procesa clics, arrastres y rueda del ratón."""
+        """Procesa clics, arrastres, rueda del ratón y movimiento hover (btn == 35)."""
         cols, rows = shutil.get_terminal_size((90, 26))
         sidebar_w = 26
 
-        # Si hay una ventana modal abierta, dirigir clics al modal
+        # Si hay una ventana modal abierta, dirigir clics y hover al modal
         if self.modal_state:
+            if act == b"M" and btn == 35:
+                m_ymin, m_ymax = self._modal_button_row_range
+                self.hover_modal_btn_idx = None
+                if m_ymin <= y <= m_ymax:
+                    for b_idx, (bx_min, bx_max) in self._modal_button_click_map.items():
+                        if bx_min <= x <= bx_max:
+                            self.modal_selected_idx = b_idx
+                            self.hover_modal_btn_idx = b_idx
+                            return
+                return
+
             if act == b"M" and btn == 0:
                 ky, kxmin, kxmax = self._modal_kind_click_range
                 if y == ky and kxmin <= x <= kxmax:
@@ -1231,6 +1283,76 @@ class MecaTUI:
             return
 
         if act == b"M":
+            # 0. Movimiento de cursor sin clic (Hover: btn == 35)
+            if btn == 35:
+                btn_y_min, btn_y_max = self._button_row_range
+
+                # Hover sobre barra lateral izquierda
+                if x <= sidebar_w:
+                    sec_idx = self._sidebar_click_map.get(y)
+                    self.hover_sidebar_idx = sec_idx
+                    self.hover_item_idx = None
+                    self.hover_subcontrol = None
+                    self.hover_button_key = None
+                    if sec_idx is not None:
+                        _, _, _, s_title, s_desc = self.SECTIONS[sec_idx]
+                        self.status_message = f"{s_title}: {s_desc}"
+                    return
+
+                # Hover sobre los 3 botones inferiores 3D
+                if x > sidebar_w + 1 and btn_y_min <= y <= btn_y_max:
+                    self.hover_sidebar_idx = None
+                    self.hover_item_idx = None
+                    self.hover_subcontrol = None
+                    hovered_btn = None
+                    btn_idx_map = {"reset": 0, "cancel": 1, "save": 2}
+                    for b_key, (bx_min, bx_max) in self._button_click_map.items():
+                        if bx_min <= x <= bx_max:
+                            hovered_btn = b_key
+                            self.active_pane = "buttons"
+                            self.selected_button_idx = btn_idx_map[b_key]
+                            break
+                    self.hover_button_key = hovered_btn
+                    return
+
+                # Hover sobre los elementos y controles del panel derecho
+                if x > sidebar_w + 1:
+                    info = self._content_click_map.get(y)
+                    if info:
+                        self.hover_sidebar_idx = None
+                        self.hover_button_key = None
+                        self.hover_item_idx = info["item_idx"]
+                        self.active_pane = "content"
+                        self.selected_item_idx = info["item_idx"]
+                        item = info["item"]
+                        self.status_message = f"{item.name}: {item.desc}"
+
+                        if item.item_type == "stepper":
+                            m_start, m_end = info["minus_range"]
+                            p_start, p_end = info["plus_range"]
+                            if m_start <= x <= m_end:
+                                self.hover_subcontrol = "minus"
+                            elif p_start <= x <= p_end:
+                                self.hover_subcontrol = "plus"
+                            else:
+                                self.hover_subcontrol = None
+                        elif item.item_type in ("toggle", "select", "action"):
+                            c_start, c_end = info["control_range"]
+                            self.hover_subcontrol = "control" if (c_start <= x <= c_end) else None
+                        elif item.item_type == "slider":
+                            s_start, s_end = info["slider_range"]
+                            self.hover_subcontrol = "slider" if (s_start <= x <= s_end) else None
+                        else:
+                            self.hover_subcontrol = None
+                        return
+
+                # Fuera de elementos interactivos
+                self.hover_sidebar_idx = None
+                self.hover_item_idx = None
+                self.hover_subcontrol = None
+                self.hover_button_key = None
+                return
+
             # 1. Clic Izquierdo (btn == 0)
             if btn == 0:
                 # Clic en barra de título superior
@@ -1462,7 +1584,7 @@ class MecaTUI:
             "gestures:workspace_swipe": ("workspace_swipe", bool),
             "workspace:count": ("workspace_count", int),
             "workspace:layout_toggle": ("workspace_layout", str),
-            "dwindle:pseudotile": ("dwindle_pseudotile", bool),
+            "dwindle:force_split": ("dwindle_force_split", int),
             "dwindle:preserve_split": ("dwindle_preserve_split", bool),
             "dwindle:smart_split": ("dwindle_smart_split", bool),
             "master:new_status": ("master_new_status", str),
@@ -1549,7 +1671,7 @@ class MecaTUI:
             "input:touchpad:clickfinger_behavior": "input:touchpad:clickfinger_behavior",
             "input:touchpad:tap-to-click": "input:touchpad:tap-to-click",
             "input:touchpad:disable_while_typing": "input:touchpad:disable_while_typing",
-            "dwindle:pseudotile": "dwindle:pseudotile",
+            "dwindle:force_split": "dwindle:force_split",
             "dwindle:preserve_split": "dwindle:preserve_split",
             "dwindle:smart_split": "dwindle:smart_split",
             "master:new_status": "master:new_status",
