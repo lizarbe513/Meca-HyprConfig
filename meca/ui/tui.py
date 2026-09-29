@@ -99,6 +99,7 @@ class MecaTUI:
         self._sidebar_click_map: Dict[int, int] = {}
         self._content_click_map: Dict[int, Dict[str, Any]] = {}
         self._button_click_map: Dict[str, Tuple[int, int]] = {}
+        self._button_row_range: Tuple[int, int] = (0, 0)
         self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar, 2: Guardar
 
         # Inicializar definiciones de variables por sección
@@ -198,102 +199,62 @@ class MecaTUI:
 
         try:
             tty.setraw(fd)
-            # Alternate screen buffer, ocultar cursor y habilitar ratón SGR (1000, 1002, 1006)
-            sys.stdout.write("\033[?1049h\033[?25l\033[?1000h\033[?1002h\033[?1006h")
+            # Alternate screen buffer, ocultar cursor, desactivar auto-wrap (?7l) y habilitar ratón SGR
+            sys.stdout.write("\033[?1049h\033[?25l\033[?7l\033[?1000h\033[?1002h\033[?1006h\033[2J")
             sys.stdout.flush()
 
             while self.running:
                 self.render()
                 self.handle_input(fd)
         finally:
-            # Deshabilitar ratón, mostrar cursor y salir de alternate buffer
-            sys.stdout.write("\033[?1006l\033[?1002l\033[?1000l\033[?25h\033[?1049l\033[0m")
+            # Deshabilitar ratón, reactivar auto-wrap (?7h), mostrar cursor y salir de alternate buffer
+            sys.stdout.write("\033[?1006l\033[?1002l\033[?1000l\033[?7h\033[?25h\033[?1049l\033[0m")
             sys.stdout.flush()
             if self.orig_termios:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.orig_termios)
 
     # ==========================
-    # RENDERIZADO
+    # RENDERIZADO CON POSICIONAMIENTO EXACTO
     # ==========================
 
     def render(self) -> None:
         cols, rows = shutil.get_terminal_size((90, 26))
         sidebar_w = 26
-        content_w = cols - sidebar_w - 1  # 1 para el separador vertical
-        buf: List[str] = ["\033[H"]
+        content_w = max(30, cols - sidebar_w - 1)
+        buf: List[str] = []
 
-        # 1. Barra de Título Superior (Estilo Terminal Sobrio)
+        # 1. Barra de Título Superior en fila exacta 1 (\033[1;1H)
         ver = HyprIPC.get_version_info()
-        title_left = f" MECA HyprConfig "
-        title_right = f"Hyprland {ver} | Tema: {self.theme_engine.current_theme} "
+        title_left = " MECA HyprConfig "
+        title_right = f"Hyprland {ver} | Tema: {self.theme_engine.current_theme} | q: Salir "
         space_len = max(0, cols - len(title_left) - len(title_right))
-        buf.append(self.theme_engine.style("bright_foreground", "accent", title_left, bold=True))
-        buf.append(self.theme_engine.style("bright_foreground", "accent", " " * space_len))
-        buf.append(self.theme_engine.style("bright_foreground", "accent", title_right) + "\r\n")
+        header_line = (title_left + (" " * space_len) + title_right)[:cols]
+        buf.append(f"\033[1;1H" + self.theme_engine.style("bright_foreground", "accent", header_line, bold=True) + "\033[K")
 
-        # 2. Render de Cuerpo Dividido (Sidebar + Content)
-        body_rows = rows - 3  # Menos header, barra de botones y barra de estado
+        # 2. Cuerpo Dividido (Filas 2 a rows - 1)
+        body_rows = max(10, rows - 2)
         sidebar_lines = self._render_sidebar(sidebar_w, body_rows)
-        content_lines = self._render_content(content_w, body_rows)
+        content_lines = self._render_content(content_w, body_rows, sidebar_w)
 
-        sep_char = "│"
+        sep_styled = self.theme_engine.fg("muted", "│")
         for r in range(body_rows):
-            s_line = sidebar_lines[r] if r < len(sidebar_lines) else " " * sidebar_w
+            screen_y = r + 2
+            s_line = sidebar_lines[r] if r < len(sidebar_lines) else (" " * sidebar_w)
             c_line = content_lines[r] if r < len(content_lines) else ""
-            buf.append(s_line + self.theme_engine.fg("muted", sep_char) + c_line + "\033[K\r\n")
+            # Posicionamiento explícito por columna para evitar desfases de iconos o saltos de línea
+            buf.append(f"\033[{screen_y};1H{s_line}")
+            buf.append(f"\033[{screen_y};{sidebar_w + 1}H{sep_styled}")
+            buf.append(f"\033[{screen_y};{sidebar_w + 2}H{c_line}\033[K")
 
-        # 3. Fila de Botones Físicos (Restablecer, Cancelar, Guardar)
-        self._button_click_map.clear()
-        btn_reset_text = " [ Restablecer (r) ] "
-        btn_cancel_text = " [ Cancelar (c) ] "
-        btn_save_text = " [ Guardar (s) ] "
-
-        is_btn_pane = (self.active_pane == "buttons")
-
-        if is_btn_pane and self.selected_button_idx == 0:
-            btn_reset_styled = self.theme_engine.style("bright_foreground", "selection", btn_reset_text, bold=True)
-        else:
-            btn_reset_styled = self.theme_engine.style("foreground", "muted", btn_reset_text)
-
-        if is_btn_pane and self.selected_button_idx == 1:
-            btn_cancel_styled = self.theme_engine.style("bright_foreground", "selection", btn_cancel_text, bold=True)
-        else:
-            btn_cancel_styled = self.theme_engine.style("foreground", "muted", btn_cancel_text)
-
-        if is_btn_pane and self.selected_button_idx == 2:
-            btn_save_styled = self.theme_engine.style("bright_foreground", "selection", btn_save_text, bold=True)
-        else:
-            btn_save_styled = self.theme_engine.style("bright_foreground", "accent", btn_save_text, bold=True)
-
-        config_label = "  Config: ~/.config/hypr/hyprland-gui.lua"
-        buttons_raw_w = len(btn_reset_text) + 1 + len(btn_cancel_text) + 1 + len(btn_save_text)
-        mid_space = max(2, cols - len(config_label) - buttons_raw_w - 1)
-
-        # Coordenadas X para clics de ratón
-        reset_x_start = len(config_label) + mid_space + 1
-        reset_x_end = reset_x_start + len(btn_reset_text)
-
-        cancel_x_start = reset_x_end + 1
-        cancel_x_end = cancel_x_start + len(btn_cancel_text)
-
-        save_x_start = cancel_x_end + 1
-        save_x_end = save_x_start + len(btn_save_text)
-
-        self._button_click_map["reset"] = (reset_x_start, reset_x_end)
-        self._button_click_map["cancel"] = (cancel_x_start, cancel_x_end)
-        self._button_click_map["save"] = (save_x_start, save_x_end)
-
-        buf.append(self.theme_engine.fg("muted", config_label))
-        buf.append(" " * mid_space)
-        buf.append(btn_reset_styled + " " + btn_cancel_styled + " " + btn_save_styled + "\033[K\r\n")
-
-        # 4. Barra Inferior de Estado (Sobria, Cuadrada)
-        status_txt = f" {self.status_message}"
+        # 3. Barra Inferior de Estado en fila exacta 'rows' (truncada a cols - 1 para evitar scroll)
         keys_hint = " [Tab]: Foco | [r]: Restablecer | [c]: Cancelar | [s]: Guardar | [q]: Salir "
-        footer_space = max(0, cols - len(status_txt) - len(keys_hint))
-        buf.append(self.theme_engine.style("bright_foreground", "muted", status_txt))
-        buf.append(self.theme_engine.style("bright_foreground", "muted", " " * footer_space))
-        buf.append(self.theme_engine.style("bright_foreground", "muted", keys_hint))
+        if cols < 95:
+            keys_hint = " [r]:Restablecer [c]:Cancelar [s]:Guardar [q]:Salir "
+        max_status_w = max(8, cols - len(keys_hint) - 1)
+        status_txt = f" {self.status_message}"[:max_status_w]
+        footer_space = max(0, cols - 1 - len(status_txt) - len(keys_hint))
+        footer_line = (status_txt + (" " * footer_space) + keys_hint)[:cols - 1]
+        buf.append(f"\033[{rows};1H" + self.theme_engine.style("bright_foreground", "muted", footer_line) + "\033[K")
 
         sys.stdout.write("".join(buf))
         sys.stdout.flush()
@@ -304,25 +265,24 @@ class MecaTUI:
         self._sidebar_click_map.clear()
 
         for idx, (cat, sec_id, icon, title, desc) in enumerate(self.SECTIONS):
-            # Encabezado de Categoría en mayúsculas
             if cat != current_cat:
                 current_cat = cat
-                lines.append(self.theme_engine.style("muted", None, f" {cat}".ljust(width)[:width], bold=True))
+                if len(lines) < max_rows:
+                    lines.append(self.theme_engine.style("muted", None, f" {cat}".ljust(width)[:width], bold=True))
+
+            if len(lines) >= max_rows:
+                break
 
             is_sel = (idx == self.current_section_idx)
             is_active_pane = (self.active_pane == "sidebar")
 
-            # Mapear fila de pantalla (1-indexed: row 1 es header, luego líneas de sidebar)
+            # La línea actual 'len(lines)' se dibuja exactamente en screen_y = 2 + len(lines)
             screen_row = 2 + len(lines)
             self._sidebar_click_map[screen_row] = idx
 
-            # Iconos SOLO en el sidebar izquierdo, sin emojis
-            item_text = f" {icon} {title}".ljust(width)
-            if len(item_text) > width:
-                item_text = item_text[:width]
+            item_text = f" {icon} {title}".ljust(width)[:width]
 
             if is_sel and is_active_pane:
-                # Cuadro de selección sobrio y rectangular (Estilo Omarchy / macOS)
                 line = self.theme_engine.style("bright_foreground", "selection", item_text, bold=True)
             elif is_sel:
                 line = self.theme_engine.style("bright_foreground", "muted", item_text, bold=True)
@@ -331,13 +291,12 @@ class MecaTUI:
 
             lines.append(line)
 
-        # Rellenar filas sobrantes
         while len(lines) < max_rows:
             lines.append(" " * width)
 
         return lines[:max_rows]
 
-    def _render_content(self, width: int, max_rows: int) -> List[str]:
+    def _render_content(self, width: int, max_rows: int, sidebar_w: int) -> List[str]:
         lines: List[str] = []
         sec_meta = self.SECTIONS[self.current_section_idx]
         sec_id = sec_meta[1]
@@ -345,57 +304,168 @@ class MecaTUI:
         sec_desc = sec_meta[4]
         self._content_click_map.clear()
 
-        # Encabezado de la Sección Activa
+        # Encabezado de la Sección Activa (3 líneas: índices 0, 1, 2 -> screen_y 2, 3, 4)
         lines.append(" " + self.theme_engine.style("bright_foreground", None, sec_title.upper(), bold=True))
-        lines.append(" " + self.theme_engine.fg("muted", sec_desc))
-        lines.append(" " + self.theme_engine.fg("muted", "─" * (width - 2)))
+        lines.append(" " + self.theme_engine.fg("muted", sec_desc[:width - 2]))
+        lines.append(" " + self.theme_engine.fg("muted", "─" * max(1, width - 2)))
 
         items = self.section_items.get(sec_id, [])
         is_active_pane = (self.active_pane == "content")
-        sidebar_w = 26
+        content_start_x = sidebar_w + 2
 
-        for i, item in enumerate(items):
+        # Reservamos las últimas 5 líneas del panel derecho para el separador y los botones 3D (4 líneas)
+        buttons_block_h = 5
+        items_area_rows = max(3, max_rows - 3 - buttons_block_h)
+        max_visible_items = max(1, items_area_rows // 3)
+
+        # Ajustar scroll vertical de items para mantener visible el seleccionado
+        if self.selected_item_idx < self.content_scroll_offset:
+            self.content_scroll_offset = self.selected_item_idx
+        elif self.selected_item_idx >= self.content_scroll_offset + max_visible_items:
+            self.content_scroll_offset = self.selected_item_idx - max_visible_items + 1
+        self.content_scroll_offset = max(0, min(self.content_scroll_offset, max(0, len(items) - max_visible_items)))
+
+        visible_end = min(len(items), self.content_scroll_offset + max_visible_items)
+
+        for i in range(self.content_scroll_offset, visible_end):
+            item = items[i]
             is_sel = (i == self.selected_item_idx and is_active_pane)
             val_str = self._format_item_control(item, width)
 
-            # Nombre y descripción
             title_part = f"  {item.name}"
             space_middle = max(2, width - len(title_part) - len(val_str) - 3)
 
-            # Calcular coordenadas absolutas de la fila y el control
+            # Fila exacta de pantalla donde se renderiza este item
             item_screen_row = 2 + len(lines)
-            control_x_start = 1 + sidebar_w + 1 + 1 + len(title_part) + space_middle
-            control_x_end = control_x_start + len(val_str)
+            control_x_start = content_start_x + 1 + len(title_part) + space_middle
+            control_x_end = control_x_start + len(val_str) - 1
 
             click_info = {
                 "item_idx": i,
                 "item": item,
                 "control_range": (control_x_start, control_x_end),
-                "minus_range": (control_x_start, control_x_start + 5),
-                "plus_range": (control_x_end - 5, control_x_end),
-                "slider_range": (control_x_start, control_x_start + 11),
+                "minus_range": (control_x_start - 1, control_x_start + 5),
+                "plus_range": (control_x_end - 5, control_x_end + 1),
+                "slider_range": (control_x_start, control_x_start + 10),
             }
             self._content_click_map[item_screen_row] = click_info
-            self._content_click_map[item_screen_row + 1] = click_info  # clic en descripción también selecciona
+            self._content_click_map[item_screen_row + 1] = click_info
 
+            row_str = f" {title_part}{' ' * space_middle}{val_str} "
             if is_sel:
-                # Fila seleccionada con caja rectangular sobria (Estilo Omarchy Widget)
-                row_str = f" {title_part}{' ' * space_middle}{val_str} "
-                lines.append(self.theme_engine.style("bright_foreground", "selection", row_str, bold=True))
+                lines.append(self.theme_engine.style("bright_foreground", "selection", row_str[:width], bold=True))
                 desc_str = f"   └─ {item.desc}"
                 lines.append(self.theme_engine.fg("muted", desc_str[:width]))
             else:
-                row_str = f" {title_part}{' ' * space_middle}{val_str} "
-                lines.append(row_str)
+                lines.append(row_str[:width])
                 desc_str = f"   {item.desc}"
                 lines.append(self.theme_engine.fg("muted", desc_str[:width]))
 
-            lines.append("")  # Espacio entre items
+            lines.append("")
 
-        while len(lines) < max_rows:
-            lines.append(" " * width)
+        # Rellenar espacio hasta la zona de botones 3D
+        target_before_buttons = max(3, max_rows - buttons_block_h)
+        while len(lines) < target_before_buttons:
+            lines.append("")
+
+        # Separador antes de los botones físicos 3D
+        lines.append(" " + self.theme_engine.fg("muted", "─" * max(1, width - 2)))
+
+        # Renderizar los 3 botones físicos 3D (4 líneas de alto)
+        btn_top_screen_y = 2 + len(lines)
+        btn_lines = self._render_3d_buttons(width, btn_top_screen_y, content_start_x)
+        lines.extend(btn_lines)
 
         return lines[:max_rows]
+
+    def _render_3d_buttons(self, width: int, btn_top_screen_y: int, content_start_x: int) -> List[str]:
+        """
+        Dibuja los 3 botones físicos con arte 3D estilo dibujo:
+        - Cara rectangular frontal con texto centrado
+        - Pared lateral izquierda sólida negra/oscura en diagonal (█ / ██)
+        - Sombra inferior en damero / ajedrezado (▀▄▀▄▀▄)
+        """
+        self._button_click_map.clear()
+        self._button_row_range = (btn_top_screen_y, btn_top_screen_y + 3)
+
+        buttons_spec = [
+            ("reset", 0, "RESTABLECER"),
+            ("cancel", 1, "CANCELAR"),
+            ("save", 2, "GUARDAR"),
+        ]
+
+        inner_w = 13
+        if width >= 72:
+            inner_w = 15
+        elif width < 60:
+            inner_w = 11
+
+        btn_total_w = inner_w + 4  # 2 (pared 3D izq) + 1 (│) + inner_w + 1 (│)
+        gap = 3 if width >= 68 else 1
+
+        row0_parts = ["  "]
+        row1_parts = ["  "]
+        row2_parts = ["  "]
+        row3_parts = ["  "]
+
+        cur_rel_x = 2
+        is_btn_pane = (self.active_pane == "buttons")
+
+        for btn_key, btn_idx, label in buttons_spec:
+            is_sel = (is_btn_pane and self.selected_button_idx == btn_idx)
+            is_primary = (btn_key == "save")
+
+            if is_sel:
+                face_fg = "bright_foreground"
+                face_bg = "selection"
+                border_col = "bright_foreground"
+            elif is_primary:
+                face_fg = "bright_foreground"
+                face_bg = "accent"
+                border_col = "accent"
+            else:
+                face_fg = "bright_foreground"
+                face_bg = None
+                border_col = "foreground"
+
+            abs_x_start = content_start_x + cur_rel_x
+            abs_x_end = abs_x_start + btn_total_w - 1
+            self._button_click_map[btn_key] = (abs_x_start, abs_x_end)
+
+            # Línea 0:   ┌───────────────┐
+            top_box = "┌" + ("─" * inner_w) + "┐"
+            r0 = "  " + self.theme_engine.style(border_col, face_bg, top_box, bold=True)
+
+            # Línea 1:  █│    GUARDAR    │
+            centered_lbl = label.center(inner_w)[:inner_w]
+            mid_box = "│" + centered_lbl + "│"
+            left_wall_1 = self.theme_engine.fg("muted", " █")
+            r1 = left_wall_1 + self.theme_engine.style(face_fg, face_bg, mid_box, bold=True)
+
+            # Línea 2: ██└───────────────┘
+            bot_box = "└" + ("─" * inner_w) + "┘"
+            left_wall_2 = self.theme_engine.fg("muted", "██")
+            r2 = left_wall_2 + self.theme_engine.style(border_col, face_bg, bot_box, bold=True)
+
+            # Línea 3: ▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄  (Base ajedrezada 3D como en el boceto)
+            checker_len = btn_total_w - 1
+            checker_pat = ("▀▄" * ((checker_len // 2) + 1))[:checker_len]
+            shadow_col = "accent" if (is_sel or is_primary) else "muted"
+            r3 = self.theme_engine.fg(shadow_col, checker_pat) + " "
+
+            row0_parts.append(r0 + (" " * gap))
+            row1_parts.append(r1 + (" " * gap))
+            row2_parts.append(r2 + (" " * gap))
+            row3_parts.append(r3 + (" " * gap))
+
+            cur_rel_x += btn_total_w + gap
+
+        return [
+            "".join(row0_parts),
+            "".join(row1_parts),
+            "".join(row2_parts),
+            "".join(row3_parts),
+        ]
 
     def _format_item_control(self, item: SectionItem, max_w: int) -> str:
         """Formatea el control interactivo: Stepper, Toggle, Select o Slider."""
@@ -643,8 +713,9 @@ class MecaTUI:
                         self.running = False
                     return
 
-                # Clic en la fila física de botones (rows - 1)
-                if y == rows - 1:
+                # Clic en la zona de los 3 botones físicos 3D (4 filas de alto en el panel derecho)
+                btn_y_min, btn_y_max = self._button_row_range
+                if x > sidebar_w + 1 and btn_y_min <= y <= btn_y_max:
                     reset_r = self._button_click_map.get("reset")
                     cancel_r = self._button_click_map.get("cancel")
                     save_r = self._button_click_map.get("save")
@@ -653,15 +724,17 @@ class MecaTUI:
                         self.active_pane = "buttons"
                         self.selected_button_idx = 0
                         self.reset_to_defaults()
+                        return
                     elif cancel_r and cancel_r[0] <= x <= cancel_r[1]:
                         self.active_pane = "buttons"
                         self.selected_button_idx = 1
                         self.cancel_changes()
+                        return
                     elif save_r and save_r[0] <= x <= save_r[1]:
                         self.active_pane = "buttons"
                         self.selected_button_idx = 2
                         self.save_all()
-                    return
+                        return
 
                 # Clic en barra inferior de estado (rows)
                 if y == rows:
