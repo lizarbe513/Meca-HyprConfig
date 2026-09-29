@@ -4,8 +4,12 @@ Módulo IPC para comunicación en tiempo real con Hyprland mediante hyprctl.
 
 from __future__ import annotations
 import json
+import os
 import subprocess
+import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
 
 
 class HyprIPC:
@@ -63,12 +67,58 @@ class HyprIPC:
         return None
 
     @classmethod
-    def ensure_floating_centered(cls, width: int = 760, height: int = 920) -> bool:
+    def get_clients(cls) -> List[Dict[str, Any]]:
+        """Obtiene todas las ventanas abiertas en Hyprland."""
+        out = cls.run_hyprctl(["clients", "-j"])
+        if out:
+            try:
+                return json.loads(out)
+            except json.JSONDecodeError:
+                pass
+        return []
+
+    @classmethod
+    def find_our_window(cls) -> Optional[Dict[str, Any]]:
+        """Localiza la ventana de terminal que ejecuta este proceso recorriendo sus PIDs ancestros."""
+        ancestor_pids: List[int] = []
+        pid = os.getpid()
+        for _ in range(12):
+            if pid <= 1:
+                break
+            ancestor_pids.append(pid)
+            stat_file = Path(f"/proc/{pid}/stat")
+            if not stat_file.exists():
+                break
+            try:
+                content = stat_file.read_text(encoding="utf-8")
+                rparen = content.rfind(")")
+                if rparen == -1:
+                    break
+                fields = content[rparen + 2 :].split()
+                pid = int(fields[1])  # ppid
+            except Exception:
+                break
+
+        clients = cls.get_clients()
+        pid_to_client = {int(c.get("pid", -1)): c for c in clients if c.get("pid")}
+        for anc in ancestor_pids:
+            if anc in pid_to_client:
+                return pid_to_client[anc]
+        return cls.get_active_window()
+
+    @classmethod
+    def ensure_floating_centered(cls, width: int = 680, height: int = 960) -> bool:
         """
-        Convierte la ventana actual en una ventana flotante rectangular vertical y centrada.
-        Retorna True si la ventana era originalmente de mosaico (tiled) y fue pasada a flotante.
+        Convierte la ventana actual en una ventana flotante rectangular vertical (más altura que anchura)
+        y centrada. Retorna True si la ventana era originalmente de mosaico (tiled).
         """
-        win = cls.get_active_window()
+        win = None
+        for _ in range(6):
+            win = cls.find_our_window()
+            if win and win.get("address"):
+                break
+            time.sleep(0.03)
+
         if not win:
             return False
 
@@ -78,26 +128,43 @@ class HyprIPC:
             scale = float(mon.get("scale", 1.0) or 1.0)
             mon_w = int(mon.get("width", 1920) / scale)
             mon_h = int(mon.get("height", 1080) / scale)
-            height = min(height, int(mon_h * 0.88))
-            width = min(width, int(mon_w * 0.82))
+            height = min(height, max(640, mon_h - 60))
+            width = min(width, int(mon_w * 0.75))
+            # Garantizar que la altura sea siempre notoriamente mayor que la anchura
+            if width >= height:
+                width = int(height * 0.72)
 
+        addr = str(win.get("address", "")).strip()
         was_tiled = not bool(win.get("floating", False))
-        if was_tiled:
-            cls.run_hyprctl([
-                "--batch",
-                f"dispatch setfloating ; dispatch resizeactive exact {width} {height} ; dispatch centerwindow",
-            ])
+
+        cmds: List[str] = []
+        if addr:
+            # Quitar etiqueta floating-window de Omarchy que fuerza 875x600 horizontal
+            cmds.append(f"dispatch tagwindow -floating-window address:{addr}")
+            if was_tiled:
+                cmds.append(f"dispatch setfloating address:{addr}")
+            cmds.append(f"dispatch focuswindow address:{addr}")
+            cmds.append(f"dispatch resizewindowpixel exact {width} {height},address:{addr}")
+            cmds.append(f"dispatch resizeactive exact {width} {height}")
+            cmds.append("dispatch centerwindow")
         else:
-            cls.run_hyprctl([
-                "--batch",
-                f"dispatch resizeactive exact {width} {height} ; dispatch centerwindow",
-            ])
+            if was_tiled:
+                cmds.append("dispatch setfloating")
+            cmds.append(f"dispatch resizeactive exact {width} {height}")
+            cmds.append("dispatch centerwindow")
+
+        cls.run_hyprctl(["--batch", " ; ".join(cmds)])
         return was_tiled
 
     @classmethod
     def restore_tiled(cls) -> None:
-        """Devuelve la ventana activa a modo mosaico (tiled)."""
-        cls.run_hyprctl(["dispatch", "settiled"])
+        """Devuelve la ventana de Meca a modo mosaico (tiled)."""
+        win = cls.find_our_window()
+        addr = str(win.get("address", "")).strip() if win else ""
+        if addr:
+            cls.run_hyprctl(["dispatch", "settiled", f"address:{addr}"])
+        else:
+            cls.run_hyprctl(["dispatch", "settiled"])
 
     @classmethod
     def get_option(cls, option_name: str) -> Optional[Any]:

@@ -1,8 +1,8 @@
 """
 Interfaz TUI Monolítica para Meca HyprConfig (Estilo HyprMod / GNOME / macOS).
-Arquitectura de 2 paneles (Categorías a la izquierda, Variables de Hyprland a la derecha),
-con soporte completo de ratón, controles en cuadrados cerrados, modales interactivos,
-gestión de Autostart y edición de temas de Omarchy.
+Arquitectura de 2 paneles (Categorías a la izquierda, Variables de Hyprland y Omarchy a la derecha),
+con soporte completo de ratón, menús desplegables, tarjetas de temas, controles en cuadrados cerrados,
+modales interactivos, gestión de Autostart, Barra Superior y edición de temas de Omarchy.
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ from meca.core.lizarbe_manager import LizarbeManager
 
 
 class SectionItem:
-    """Representa una variable o control configurable dentro de una sección."""
+    """Representa una variable, encabezado o tarjeta configurable dentro de una sección."""
     def __init__(
         self,
         key: str,
         name: str,
         desc: str,
-        item_type: str,  # "stepper", "toggle", "select", "slider", "action"
+        item_type: str,  # "stepper", "toggle", "select", "slider", "action", "header", "theme_card"
         min_val: float = 0,
         max_val: float = 100,
         step: float = 1,
@@ -54,25 +54,27 @@ class MecaTUI:
 
     # Secciones organizadas por grupos con iconos solo en la barra izquierda
     SECTIONS = [
-        ("LOOK & FEEL", "general", "", "General", "Gaps, bordes, layout y comportamiento general"),
-        ("LOOK & FEEL", "decoration", "", "Decoration", "Redondeo de esquinas, desenfoque, opacidad y sombras"),
-        ("LOOK & FEEL", "animations", "", "Animations", "Velocidad, curvas y transiciones de ventanas"),
-        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Hardware cursor, ocultación y factor de zoom"),
-        ("INPUT", "keybinds", "", "Keybinds", "Tecla Compose (Bloq Mayús), repetición y atajos"),
-        ("INPUT", "devices", "󰍽", "Devices", "Sensibilidad de ratón, aceleración y gestos touchpad"),
-        ("DISPLAY", "monitors", "󰍹", "Monitors", "Escala HiDPI, resolución y frecuencia de refresco"),
-        ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Escritorios persistentes y modo de distribución"),
-        ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Opciones de mosaico Dwindle, Master y Scrolling"),
-        ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Reglas de ventanas flotantes y opacidad"),
-        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Buscador y selector de aplicaciones, servicios o comandos al inicio"),
+        ("LOOK & FEEL", "general", "", "General", "Gaps, bordes, snap magnético y layout principal"),
+        ("LOOK & FEEL", "decoration", "", "Decoration", "Redondeo, opacidad, desenfoque Kawase y sombras"),
+        ("LOOK & FEEL", "animations", "", "Animations", "Curvas bezier, velocidad y estilo de transiciones"),
+        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Tamaño, cursor por hardware, ocultación y zoom"),
+        ("INPUT", "keybinds", "", "Keybinds", "Distribución de teclado, Bloq Mayús, repetición y atajos"),
+        ("INPUT", "devices", "󰍽", "Devices", "Ratón, foco, touchpad y gestos de 3 dedos"),
+        ("DISPLAY", "monitors", "󰍹", "Monitors", "Escala HiDPI, resolución, rotación, VRR y XWayland"),
+        ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Escritorios persistentes, layout y opciones misc"),
+        ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Opciones detalladas de Dwindle, Master, Scrolling y Groupbar"),
+        ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Reglas de ventanas flotantes, PiP, Steam y opacidad"),
+        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Aplicaciones, servicios o comandos al iniciar sesión"),
+        ("STARTUP & EXTRAS", "bar", "󰍜", "Barra Superior", "Posición, transparencia, reloj y widgets de la barra Omarchy"),
         ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Crear nuevos temas Omarchy y gestionar los ya creados"),
-        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondos, barra superior, luz nocturna y ajustes de Omarchy"),
+        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondos, luz nocturna, Setup Lizarbe y utilidades del sistema"),
     ]
 
     def __init__(self):
         self.theme_engine = ThemeEngine()
         self.config_sync = ConfigSync()
         self.running = True
+        self._frame_count = 0
 
         # Navegación de paneles: "sidebar" (izquierda), "content" (derecha) o "buttons" (barra inferior)
         self.active_pane = "sidebar"
@@ -101,6 +103,18 @@ class MecaTUI:
         self.saved_autostart = [dict(x) for x in self.autostart_items]
         self._was_tiled = False
 
+        # Estado del menú desplegable (dropdown) para controles de tipo "select"
+        self.dropdown_open: bool = False
+        self.dropdown_item: Optional[SectionItem] = None
+        self.dropdown_options: List[str] = []
+        self.dropdown_idx: int = 0
+        self.dropdown_scroll: int = 0
+        self.hover_dropdown_idx: Optional[int] = None
+        self.dropdown_anchor_y: int = 6
+        self.dropdown_anchor_x: int = 40
+        self._dropdown_row_map: Dict[int, int] = {}
+        self._dropdown_box_bounds: Tuple[int, int, int, int] = (0, 0, 0, 0)  # (y1, y2, x1, x2)
+
         # Estado de ventana modal:
         # None | "confirm_section_change" | "confirm_reset" | "input_autostart" | "input_theme_hex" | "create_theme"
         self.modal_state: Optional[str] = None
@@ -119,10 +133,13 @@ class MecaTUI:
         self._modal_kind_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
         self._modal_mode_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
 
-        # Estado del buscador y selector de aplicaciones en Autostart
+        # Estado del selector desplegable de aplicaciones en Autostart
+        self.autostart_dropdown_open: bool = False
+        self.autostart_selected_app_name: str = ""
         self.autostart_app_idx: int = 0
         self.autostart_app_scroll: int = 0
         self.hover_autostart_app_idx: Optional[int] = None
+        self._autostart_dropdown_btn_range: Tuple[int, int, int, int] = (0, 0, 0, 0)  # (y1, y2, x1, x2)
         self._autostart_list_click_map: Dict[int, int] = {}
         self._autostart_list_x_range: Tuple[int, int] = (0, 0)
 
@@ -161,8 +178,8 @@ class MecaTUI:
         items = [
             SectionItem(
                 "action:add_autostart",
-                "Buscar y agregar aplicacion, servicio o comando",
-                "Abre el buscador de aplicaciones instaladas o permite escribir un comando",
+                "Agregar aplicacion, servicio o comando",
+                "Abre la ventana con selector desplegable de apps o entrada de comando",
                 "action",
             ),
         ]
@@ -180,8 +197,52 @@ class MecaTUI:
             )
         return items
 
+    def _build_bar_section_items(self) -> List[SectionItem]:
+        """Construye los controles de la pestaña Barra Superior de Omarchy (~/.config/omarchy/shell.json)."""
+        items = [
+            SectionItem("bar:visible", "Mostrar barra superior", "Muestra u oculta la barra superior de Omarchy en vivo", "toggle"),
+            SectionItem("bar:position", "Posicion de la barra", "Borde de la pantalla donde se ubica la barra", "select", options=["top", "bottom", "left", "right"]),
+            SectionItem("bar:transparent", "Fondo transparente", "Hace transparente la superficie de la barra superior", "toggle"),
+            SectionItem("bar:center_anchor", "Widget ancla central", "Widget que permanece centrado en la barra", "select", options=["omarchy.clock", "omarchy.workspaces", "none"]),
+            SectionItem(
+                "bar:clock_format",
+                "Formato del reloj",
+                "Formato principal de fecha y hora en la barra",
+                "select",
+                options=["ddd d MMM h:mm AP", "ddd d MMM HH:mm", "HH:mm", "h:mm AP", "HH:mm:ss"],
+            ),
+            SectionItem(
+                "bar:clock_alt_format",
+                "Formato alternativo del reloj",
+                "Formato secundario mostrado al hacer clic sobre el reloj",
+                "select",
+                options=["d MMMM 'W'ww yyyy", "dddd, d MMMM yyyy", "yyyy-MM-dd"],
+            ),
+            SectionItem("bar:idle_screensaver", "Salvapantallas por inactividad (s)", "Segundos antes de activar el salvapantallas (0 = desactivado)", "stepper", 0, 1800, 30),
+            SectionItem("bar:idle_lock", "Bloqueo de sesion por inactividad (s)", "Segundos antes de bloquear la sesion (0 = desactivado)", "stepper", 0, 3600, 60),
+            SectionItem("action:reset_bar_defaults", "Restaurar barra por defecto", "Ejecuta 'omarchy-bar defaults' para recuperar el diseño original", "action"),
+            SectionItem("action:restart_shell", "Reiniciar barra y shell Omarchy", "Recarga el shell grafico de Omarchy completamente", "action"),
+            SectionItem(
+                "header:bar_widgets",
+                "WIDGETS DE LA BARRA SUPERIOR",
+                "Elige en que seccion mostrar cada widget mediante menu desplegable (off / left / center / right)",
+                "header",
+            ),
+        ]
+        for w_id, s_key, w_label, _ in ConfigSync.BAR_WIDGETS:
+            items.append(
+                SectionItem(
+                    f"bar_widget:{s_key}",
+                    w_label,
+                    f"Ubicacion del widget '{w_id}' en la barra (off = oculto)",
+                    "select",
+                    options=["off", "left", "center", "right"],
+                )
+            )
+        return items
+
     def _build_themes_section_items(self) -> List[SectionItem]:
-        """Construye dinámicamente los controles de la sección Temas Omarchy (crear y gestionar temas)."""
+        """Construye dinámicamente los controles de la sección Temas Omarchy y las tarjetas de temas guardados."""
         self.available_themes = self.theme_engine.list_available_themes()
         themes = self.available_themes if self.available_themes else ["tokyo-night", "lizarbe", "catppuccin", "rose-pine"]
 
@@ -198,7 +259,7 @@ class MecaTUI:
         sel_opts = list(dict.fromkeys([cur_sel, "#292e42", "#45475a", "#E31B23", "#c0c0c0", "#ccd0da", "#313244"]))
 
         cur_icons = self.settings.get("omarchy_icons", "Adwaita")
-        icon_opts = list(dict.fromkeys([cur_icons, "Yaru-blue", "Yaru-red", "Papirus-Dark", "Adwaita", "Lizarbe-Red"]))
+        icon_opts = list(dict.fromkeys([cur_icons, "Yaru-blue", "Yaru-red", "Yaru-purple", "Papirus-Dark", "Adwaita", "Lizarbe-Red"]))
 
         items = [
             SectionItem(
@@ -213,7 +274,7 @@ class MecaTUI:
                 f"Clona '{self.theme_engine.current_theme}' con otro nombre para personalizarlo",
                 "action",
             ),
-            SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Activa y carga cualquier tema creado o del sistema", "select", options=themes),
+            SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Despliega la lista completa de temas para activar cualquiera", "select", options=themes),
             SectionItem("omarchy:theme_mode", "Modo del tema (dark / light)", "Edita el modo en el tema actual y en el original", "select", options=["dark", "light"]),
             SectionItem("omarchy:theme_accent", "Color de acento (Accent)", "Edita el color de acento en el tema actual y original", "select", options=accent_opts),
             SectionItem("omarchy:theme_bg", "Color de fondo (Background)", "Edita el color de fondo en el tema actual y original", "select", options=bg_opts),
@@ -221,94 +282,184 @@ class MecaTUI:
             SectionItem("omarchy:theme_sel", "Color de seleccion (Selection)", "Edita el color de seleccion en el tema actual y original", "select", options=sel_opts),
             SectionItem("omarchy:icons", "Paquete de iconos (icons.theme)", "Edita el paquete de iconos del tema", "select", options=icon_opts),
             SectionItem("action:custom_theme_hex", "Escribir color Hex personalizado", "Ingresa un codigo #RRGGBB exacto para editar el tema", "action"),
+            SectionItem(
+                "header:saved_themes",
+                "TEMAS GUARDADOS EN EL SISTEMA",
+                "Tarjetas de temas personalizados en ~/.config/omarchy/themes (Clic/Enter: Activar │ Supr: Eliminar)",
+                "header",
+            ),
         ]
 
         user_themes = self.theme_engine.list_user_themes()
         for u_name in user_themes:
-            is_act = (self.theme_engine.normalize_theme_slug(u_name) == self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme))
-            state_badge = " [ACTIVO]" if is_act else ""
+            info = self.theme_engine.get_theme_info(u_name)
+            t_mode = info.get("mode", "dark")
+            t_icons = info.get("icon_theme", "Adwaita")
             items.append(
                 SectionItem(
                     f"user_theme:item:{u_name}",
-                    f"Tema guardado: {u_name}{state_badge}",
-                    "Clic/Enter: Activar este tema │ Supr/Del: Eliminar de ~/.config/omarchy/themes",
-                    "action",
+                    u_name,
+                    f"Modo: {t_mode} │ Iconos: {t_icons} │ Supr/Del: Eliminar",
+                    "theme_card",
                 )
             )
 
         return items
 
+    def _get_monitor_mode_options(self) -> List[str]:
+        """Obtiene los modos reales soportados por el monitor activo desde hyprctl."""
+        opts = ["preferred"]
+        if self.monitors:
+            avail = self.monitors[0].get("availableModes", [])
+            for m in avail:
+                if isinstance(m, str) and m not in opts:
+                    opts.append(m)
+        cur = str(self.settings.get("monitor_mode", "1920x1080@60.00Hz"))
+        if cur and cur not in opts:
+            opts.insert(0, cur)
+        if len(opts) <= 1:
+            opts.extend(["1920x1080@60.00Hz", "1920x1080@75.00Hz", "2560x1440@144.00Hz", "1280x720@60.00Hz"])
+        return opts[:24]
+
     def _init_section_items(self) -> Dict[str, List[SectionItem]]:
         themes = self.available_themes if self.available_themes else ["tokyo-night", "rose-pine", "lizarbe", "white", "catppuccin"]
+        mon_modes = self._get_monitor_mode_options()
 
         return {
             "general": [
-                SectionItem("general:gaps_in", "Inner gaps", "Separación entre ventanas en píxeles (gaps_in)", "stepper", 0, 30, 1),
-                SectionItem("general:gaps_out", "Outer gaps", "Separación respecto a los bordes de la pantalla (gaps_out)", "stepper", 0, 50, 1),
+                SectionItem("general:gaps_in", "Inner gaps (gaps_in)", "Separación entre ventanas en píxeles", "stepper", 0, 30, 1),
+                SectionItem("general:gaps_out", "Outer gaps (gaps_out)", "Separación respecto a los bordes de la pantalla", "stepper", 0, 50, 1),
                 SectionItem("general:border_size", "Border size", "Grosor de la línea del borde de ventanas en píxeles", "stepper", 0, 10, 1),
-                SectionItem("general:resize_on_border", "Resize on border", "Permite redimensionar haciendo clic y arrastre en bordes", "toggle"),
-                SectionItem("general:layout", "Layout", "Gestor de mosaico principal (dwindle / master / scrolling)", "select", options=["dwindle", "master", "scrolling"]),
+                SectionItem("general:resize_on_border", "Resize on border", "Permite redimensionar arrastrando los bordes con el ratón", "toggle"),
+                SectionItem("general:extend_border_grab_area", "Extend border grab area", "Píxeles extra alrededor del borde para facilitar el agarre", "stepper", 0, 30, 1),
+                SectionItem("general:hover_icon_on_border", "Hover icon on border", "Muestra el icono de redimensionado al pasar el cursor por el borde", "toggle"),
+                SectionItem("general:layout", "Layout principal", "Algoritmo de mosaico global (dwindle / master / scrolling)", "select", options=["dwindle", "master", "scrolling"]),
                 SectionItem("general:allow_tearing", "Allow tearing", "Permite screen tearing para menor latencia en juegos", "toggle"),
-                SectionItem("general:snap:enabled", "Enable snap", "Ajuste magnético automático para ventanas flotantes", "toggle"),
+                SectionItem("general:no_focus_fallback", "No focus fallback", "No salta el foco a otra ventana cuando no hay ventana en esa dirección", "toggle"),
+                SectionItem("general:snap:enabled", "Enable floating snap", "Ajuste magnético automático para ventanas flotantes", "toggle"),
+                SectionItem("general:snap:window_gap", "Snap window gap", "Distancia en píxeles para acoplar ventanas flotantes entre sí", "stepper", 0, 40, 2),
+                SectionItem("general:snap:monitor_gap", "Snap monitor gap", "Distancia en píxeles para acoplar ventanas a los bordes del monitor", "stepper", 0, 40, 2),
+                SectionItem("general:snap:border_overlap", "Snap border overlap", "Superpone un borde al acoplar dos ventanas flotantes", "toggle"),
             ],
             "decoration": [
                 SectionItem("decoration:rounding", "Rounding", "Radio de esquinas redondeadas en píxeles (0 = recto)", "stepper", 0, 30, 1),
-                SectionItem("decoration:active_opacity", "Active opacity", "Opacidad de la ventana activa (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
-                SectionItem("decoration:inactive_opacity", "Inactive opacity", "Opacidad de ventanas no enfocadas (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
-                SectionItem("decoration:dim_inactive", "Dim inactive", "Atenúa la iluminación de ventanas inactivas", "toggle"),
-                SectionItem("decoration:dim_strength", "Dim strength", "Intensidad del efecto de atenuación en ventanas inactivas", "slider", 0.0, 1.0, 0.05),
-                SectionItem("decoration:blur:enabled", "Blur enabled", "Desenfoque de fondo tipo Kawase para transparencias", "toggle"),
-                SectionItem("decoration:blur:size", "Blur size", "Radio del algoritmo de desenfoque", "stepper", 1, 15, 1),
-                SectionItem("decoration:blur:passes", "Blur passes", "Número de pasadas de filtrado (mayor = más suave)", "stepper", 1, 6, 1),
-                SectionItem("decoration:shadow:enabled", "Drop shadows", "Habilita sombras exteriores bajo las ventanas", "toggle"),
+                SectionItem("decoration:rounding_power", "Rounding power (Squircle)", "Curvatura de esquina superelíptica (2.0 = círculo, 4.0 = squircle)", "slider", 1.0, 5.0, 0.25),
+                SectionItem("decoration:active_opacity", "Active opacity", "Opacidad de la ventana enfocada (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:inactive_opacity", "Inactive opacity", "Opacidad de ventanas inactivas (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:fullscreen_opacity", "Fullscreen opacity", "Opacidad de ventanas en pantalla completa", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:dim_inactive", "Dim inactive", "Oscurece suavemente las ventanas no enfocadas", "toggle"),
+                SectionItem("decoration:dim_strength", "Dim strength", "Intensidad del oscurecimiento en ventanas inactivas", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:dim_special", "Dim special workspace", "Oscurecimiento del fondo al abrir un workspace especial", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:blur:enabled", "Blur enabled", "Desenfoque de fondo tipo Kawase para ventanas translúcidas", "toggle"),
+                SectionItem("decoration:blur:size", "Blur size", "Radio del algoritmo de desenfoque (mayor = más difuso)", "stepper", 1, 20, 1),
+                SectionItem("decoration:blur:passes", "Blur passes", "Número de pasadas de filtrado Kawase", "stepper", 1, 6, 1),
+                SectionItem("decoration:blur:new_optimizations", "Blur optimizations", "Activa optimizaciones de rendimiento para el desenfoque", "toggle"),
+                SectionItem("decoration:blur:xray", "Blur X-Ray", "Las ventanas flotantes desenfocan directamente el fondo de pantalla", "toggle"),
+                SectionItem("decoration:blur:ignore_opacity", "Blur ignore opacity", "Calcula el desenfoque ignorando la opacidad de la ventana", "toggle"),
+                SectionItem("decoration:blur:vibrancy", "Blur vibrancy", "Saturación de colores en áreas desenfocadas", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:shadow:enabled", "Drop shadows", "Habilita sombras proyectadas bajo las ventanas", "toggle"),
+                SectionItem("decoration:shadow:range", "Shadow range", "Tamaño del radio de la sombra en píxeles", "stepper", 1, 40, 1),
+                SectionItem("decoration:shadow:render_power", "Shadow render power", "Caída de degradado de la sombra (1 = suave, 4 = intensa)", "stepper", 1, 4, 1),
+                SectionItem("decoration:shadow:sharp", "Sharp shadows", "Dibuja sombras nítidas sin difuminado", "toggle"),
             ],
             "animations": [
-                SectionItem("animations:enabled", "Enable animations", "Habilita transiciones y animaciones de Hyprland", "toggle"),
-                SectionItem("animations:preset", "Animation preset", "Preset de velocidad de curvas bezier", "select", options=["smooth", "snappy", "minimal"]),
-                SectionItem("animations:windows", "Windows animation", "Animación al abrir, cerrar o mover ventanas", "select", options=["popin 80%", "slide", "fade"]),
-                SectionItem("animations:workspaces", "Workspaces animation", "Animación de transición al cambiar de escritorio", "select", options=["slide", "slidefade", "fade"]),
+                SectionItem("animations:enabled", "Enable animations", "Habilita las transiciones y animaciones globales de Hyprland", "toggle"),
+                SectionItem("animations:workspace_wraparound", "Workspace wraparound", "Anima el salto del último escritorio al primero como continuo", "toggle"),
+                SectionItem("animations:preset", "Animation preset", "Perfil global de velocidad de curvas (omarchy / smooth / snappy / minimal)", "select", options=["omarchy", "smooth", "snappy", "minimal"]),
+                SectionItem("animations:windows", "Windows style", "Estilo al abrir y cerrar ventanas (hl.animation windowsIn/Out)", "select", options=["popin 87%", "popin 80%", "slide", "gnomed"]),
+                SectionItem("animations:windows_speed", "Windows speed", "Velocidad base de la animación de ventanas", "slider", 1.0, 10.0, 0.5),
+                SectionItem("animations:fade_enabled", "Enable fade", "Habilita efectos de desvanecimiento (fade) en ventanas y capas", "toggle"),
+                SectionItem("animations:layers", "Layers style", "Estilo de animación para paneles y menús superpuestos", "select", options=["fade", "slide", "popin 80%"]),
+                SectionItem("animations:workspaces_enabled", "Animate workspaces", "Activa la animación al cambiar de espacio de trabajo", "toggle"),
+                SectionItem("animations:workspaces", "Workspaces style", "Estilo de transición entre escritorios", "select", options=["slide", "slidevert", "fade", "slidefade 20%"]),
+                SectionItem("animations:special", "Special workspace style", "Estilo de transición del escritorio especial (scratchpad)", "select", options=["slidevert", "slide", "fade"]),
             ],
             "cursor": [
-                SectionItem("cursor:no_hardware_cursors", "Disable HW cursor", "Desactiva cursor por hardware (corrige parpadeos Nvidia)", "toggle"),
-                SectionItem("cursor:inactive_timeout", "Inactive timeout", "Segundos de inactividad antes de ocultar el puntero (0 = nunca)", "stepper", 0, 30, 1),
-                SectionItem("cursor:zoom_factor", "Zoom factor", "Factor de aumento de pantalla con cursor", "slider", 1.0, 3.0, 0.25),
+                SectionItem("cursor:size", "Cursor size (XCURSOR_SIZE)", "Tamaño del puntero en píxeles (16 / 20 / 24 / 28 / 32 / 48)", "select", options=["16", "20", "24", "28", "32", "48"]),
+                SectionItem("cursor:no_hardware_cursors", "Disable HW cursors", "Usa cursor por software (evita parpadeos o artefactos en GPUs)", "toggle"),
+                SectionItem("cursor:inactive_timeout", "Inactive timeout", "Segundos de inactividad antes de ocultar el cursor (0 = nunca)", "stepper", 0, 30, 1),
+                SectionItem("cursor:hide_on_key_press", "Hide on key press", "Oculta automáticamente el puntero al empezar a escribir", "toggle"),
+                SectionItem("cursor:hide_on_touch", "Hide on touch", "Oculta el puntero al interactuar con pantalla táctil", "toggle"),
+                SectionItem("cursor:warp_on_change_workspace", "Warp on workspace change", "Mueve el cursor a la ventana activa al cambiar de escritorio (0/1/2)", "stepper", 0, 2, 1),
+                SectionItem("cursor:zoom_factor", "Zoom factor", "Factor de lupa alrededor del puntero (1.0 = sin zoom)", "slider", 1.0, 3.0, 0.25),
+                SectionItem("cursor:zoom_rigid", "Zoom rigid", "El área ampliada sigue rígidamente el movimiento del puntero", "toggle"),
             ],
             "keybinds": [
-                SectionItem("input:compose_key", "Tecla Bloq Mayús", "Alt Gr = Compose (Bloq Mayús normal) vs Omarchy default", "select", options=["Alt Gr (Compose)", "Bloq Mayús (Compose)"]),
-                SectionItem("action:fix_caps", "Aplicar corrección Bloq Mayús", "Guarda la opción en input.lua y libera Bloq Mayús", "action"),
-                SectionItem("input:repeat_rate", "Keyboard repeat rate", "Frecuencia de repetición de teclas en Hz", "stepper", 10, 80, 5),
+                SectionItem("input:kb_layout", "Keyboard layout (kb_layout)", "Distribución de teclado XKB (ej. us, latam, es)", "select", options=["us", "latam", "es", "us,latam", "us,es", "br", "fr", "de"]),
+                SectionItem("input:kb_variant", "Keyboard variant (kb_variant)", "Variante de distribución (vacío, intl, deadtilde, nodeadkeys)", "select", options=["none", "intl", "deadtilde", "nodeadkeys", "dvorak", "colemak"]),
+                SectionItem("input:compose_key", "Tecla Bloq Mayús / Compose", "Alt Gr = Compose (Bloq Mayús normal) vs Omarchy default", "select", options=["Alt Gr (Compose)", "Bloq Mayús (Compose)"]),
+                SectionItem("action:fix_caps", "Aplicar corrección Bloq Mayús", "Guarda la opción en input.lua y libera Bloq Mayús de inmediato", "action"),
+                SectionItem("input:repeat_rate", "Keyboard repeat rate", "Frecuencia de repetición de teclas mantenidas (Hz)", "stepper", 10, 100, 5),
                 SectionItem("input:repeat_delay", "Keyboard repeat delay", "Retardo antes de iniciar repetición continua (ms)", "stepper", 150, 600, 25),
-                SectionItem("input:numlock_by_default", "Numlock by default", "Activa el teclado numérico al iniciar sesión", "toggle"),
+                SectionItem("input:numlock_by_default", "Numlock by default", "Activa el bloque numérico automáticamente al iniciar sesión", "toggle"),
+                SectionItem("binds:omarchy_default_bindings", "Omarchy default bindings", "Carga los atajos predeterminados del sistema en hyprland.lua", "toggle"),
+                SectionItem("binds:omarchy_preinstalled_bindings", "Preinstalled app bindings", "Mantiene atajos para aplicaciones y webapps preinstaladas", "toggle"),
+                SectionItem("binds:hide_special", "Hide special on workspace change", "Cierra el scratchpad al cambiar a otro escritorio normal", "toggle"),
+                SectionItem("binds:workspace_back_forth", "Workspace back and forth", "Pulsar el número del escritorio actual regresa al escritorio previo", "toggle"),
+                SectionItem("binds:allow_cycles", "Allow workspace cycles", "Permite encadenar saltos al navegar por el historial de escritorios", "toggle"),
             ],
             "devices": [
-                SectionItem("input:sensitivity", "Mouse sensitivity", "Sensibilidad del puntero (-1.0 a 1.0)", "slider", -1.0, 1.0, 0.1),
-                SectionItem("input:accel_profile", "Acceleration profile", "Perfil de aceleración (flat = precisa, adaptive = dinámica)", "select", options=["flat", "adaptive"]),
-                SectionItem("input:touchpad:natural_scroll", "Natural scroll", "Dirección inversa de scroll (estilo smartphone)", "toggle"),
-                SectionItem("input:touchpad:clickfinger_behavior", "Clickfinger behavior", "Clic con dos dedos equivale a clic secundario", "toggle"),
-                SectionItem("input:touchpad:tap-to-click", "Tap to click", "Tocar el touchpad genera un clic primario", "toggle"),
-                SectionItem("input:touchpad:disable_while_typing", "Disable while typing", "Inhabilita el touchpad temporalmente al escribir", "toggle"),
-                SectionItem("gestures:workspace_swipe", "Workspace swipe", "Gesto de 3 dedos en touchpad para cambiar escritorios", "toggle"),
+                SectionItem("input:follow_mouse", "Follow mouse (0-3)", "Foco al mover cursor (0=Off, 1=Total, 2=Cursor suelto, 3=Separado)", "stepper", 0, 3, 1),
+                SectionItem("input:mouse_refocus", "Mouse refocus", "Vuelve a enfocar la ventana bajo el cursor al cruzar bordes", "toggle"),
+                SectionItem("input:sensitivity", "Mouse sensitivity", "Velocidad del puntero libinput (-1.0 a 1.0)", "slider", -1.0, 1.0, 0.05),
+                SectionItem("input:accel_profile", "Acceleration profile", "Curva de aceleración (flat = directa 1:1, adaptive = dinámica)", "select", options=["flat", "adaptive"]),
+                SectionItem("input:mouse_natural_scroll", "Mouse natural scroll", "Invierte el sentido de desplazamiento de la rueda del ratón", "toggle"),
+                SectionItem("input:left_handed", "Left-handed mouse", "Intercambia los botones izquierdo y derecho del ratón", "toggle"),
+                SectionItem("input:touchpad:natural_scroll", "Touchpad natural scroll", "Desplazamiento inverso natural en el touchpad", "toggle"),
+                SectionItem("input:touchpad:scroll_factor", "Touchpad scroll factor", "Multiplicador de velocidad de desplazamiento en el touchpad", "slider", 0.1, 2.0, 0.1),
+                SectionItem("input:touchpad:clickfinger_behavior", "Clickfinger behavior", "Clic con 2 dedos = derecho, 3 dedos = central", "toggle"),
+                SectionItem("input:touchpad:tap-to-click", "Tap to click", "Tocar suavemente el touchpad produce un clic izquierdo", "toggle"),
+                SectionItem("input:touchpad:disable_while_typing", "Disable while typing", "Desactiva el touchpad mientras se escribe en el teclado", "toggle"),
+                SectionItem("input:touchpad:drag_3fg", "Three-finger drag (drag_3fg)", "Arrastrar ventanas con 3 dedos (0=Off, 1=Activo, 2=Con bloqueo)", "stepper", 0, 2, 1),
+                SectionItem("gestures:workspace_swipe", "3-finger workspace swipe", "Gesto horizontal de 3 dedos para cambiar de escritorio (hl.gesture)", "toggle"),
             ],
             "monitors": [
-                SectionItem("display:scale", "Monitor scale", "Escala de visualización HiDPI para la pantalla activa", "select", options=self.scales),
-                SectionItem("display:mode", "Display resolution & Hz", "Modo y frecuencia de actualización del monitor", "select", options=["1920x1080@60Hz", "1920x1080@75Hz", "2560x1440@144Hz", "1280x720@60Hz"]),
-                SectionItem("action:save_monitor", "Aplicar configuración de monitor", "Escribe los cambios en ~/.config/hypr/monitors.lua", "action"),
+                SectionItem("display:scale", "Monitor scale (HiDPI)", "Factor de escala de la pantalla activa en monitors.lua", "select", options=self.scales),
+                SectionItem("display:mode", "Display resolution & Hz", "Resolución y tasa de refresco detectadas para el monitor", "select", options=mon_modes),
+                SectionItem("display:transform", "Rotación / Transform (0-3)", "Orientación (0=Normal, 1=90°, 2=180°, 3=270°)", "select", options=["0 (Normal)", "1 (90 grados)", "2 (180 grados)", "3 (270 grados)"]),
+                SectionItem("display:gdk_scale", "GDK_SCALE (Apps GTK)", "Escala entera para aplicaciones GTK/X11 (1 o 2)", "select", options=["1", "2"]),
+                SectionItem("display:vrr", "Adaptive Sync / VRR", "Frecuencia variable FreeSync/G-Sync (0=Off, 1=On, 2=Fullscreen)", "select", options=["0 (Desactivado)", "1 (Siempre activo)", "2 (Solo pantalla completa)"]),
+                SectionItem("display:xwayland_zero_scaling", "XWayland force zero scaling", "Evita el desenfoque en aplicaciones XWayland con HiDPI", "toggle"),
+                SectionItem("action:save_monitor", "Guardar en monitors.lua", "Escribe y aplica la configuración del monitor en ~/.config/hypr/monitors.lua", "action"),
             ],
             "workspaces": [
-                SectionItem("workspace:count", "Persistent workspaces", "Cantidad de escritorios fijos en la barra", "stepper", 1, 10, 1),
-                SectionItem("workspace:layout_toggle", "Workspace layout", "Alternar entre modo dwindle o modo niri (scrolling)", "select", options=["dwindle", "scrolling"]),
+                SectionItem("workspace:count", "Persistent workspaces", "Cantidad de escritorios fijos creados con hl.workspace_rule", "stepper", 1, 10, 1),
+                SectionItem("workspace:layout_toggle", "Default workspace layout", "Algoritmo asignado a los escritorios (dwindle / scrolling / master)", "select", options=["dwindle", "scrolling", "master"]),
+                SectionItem("misc:focus_on_activate", "Focus on activate", "Enfoca automáticamente las aplicaciones que solicitan atención", "toggle"),
+                SectionItem("misc:dpms_key", "Key press enables DPMS", "Despierta la pantalla suspendida al pulsar cualquier tecla", "toggle"),
+                SectionItem("misc:dpms_mouse", "Mouse move enables DPMS", "Despierta la pantalla suspendida al mover el ratón", "toggle"),
+                SectionItem("misc:focus_under_fs", "On focus under fullscreen", "Al abrir ventana sobre fullscreen (0=Nada, 1=Reemplazar, 2=Salir FS)", "stepper", 0, 2, 1),
+                SectionItem("misc:animate_resizes", "Animate manual resizes", "Anima suavemente el redimensionado manual con el ratón", "toggle"),
+                SectionItem("misc:animate_dragging", "Animate window dragging", "Anima las ventanas mientras se arrastran con el puntero", "toggle"),
             ],
             "layouts": [
-                SectionItem("dwindle:force_split", "Force split", "Dirección de división (0=ratón, 1=izq/arriba, 2=der/abajo)", "stepper", 0, 2, 1),
-                SectionItem("dwindle:preserve_split", "Preserve split", "Mantiene la dirección de división al cerrar ventanas", "toggle"),
-                SectionItem("dwindle:smart_split", "Smart split", "Determina división según posición del cursor", "toggle"),
-                SectionItem("master:new_status", "Master new status", "Ubicación de ventanas recién creadas (master / slave)", "select", options=["master", "slave"]),
+                SectionItem("dwindle:force_split", "Dwindle force split", "Dirección de división (0=Sigue ratón, 1=Izq/Arriba, 2=Der/Abajo)", "stepper", 0, 2, 1),
+                SectionItem("dwindle:preserve_split", "Dwindle preserve split", "Conserva la orientación de división independientemente del contenido", "toggle"),
+                SectionItem("dwindle:smart_split", "Dwindle smart split", "Divide según la posición exacta del cursor dentro de la ventana", "toggle"),
+                SectionItem("dwindle:smart_resizing", "Dwindle smart resizing", "Determina qué borde redimensionar según la dirección del ratón", "toggle"),
+                SectionItem("dwindle:split_ratio", "Dwindle default split ratio", "Proporción de tamaño al dividir ventanas (1.0 = 50%/50%)", "slider", 0.5, 1.5, 0.05),
+                SectionItem("layout:single_window_aspect", "Single window aspect ratio", "Limita el ancho de una ventana única en pantallas ultrawide", "select", options=["0 0", "1 1", "4 3", "16 9"]),
+                SectionItem("master:new_status", "Master new status", "Posición de nuevas ventanas en layout Master (master / slave / inherit)", "select", options=["master", "slave", "inherit"]),
+                SectionItem("master:mfact", "Master factor (mfact)", "Porcentaje de pantalla que ocupa la columna principal Master", "slider", 0.20, 0.80, 0.05),
+                SectionItem("master:orientation", "Master orientation", "Ubicación del área principal Master en la pantalla", "select", options=["left", "right", "top", "bottom", "center"]),
+                SectionItem("scrolling:column_width", "Scrolling column width", "Ancho relativo de cada columna en layout Scrolling (0.49 = 2 cols)", "slider", 0.25, 1.0, 0.02),
+                SectionItem("group:groupbar:enabled", "Groupbar enabled", "Muestra la barra de pestañas superior en ventanas agrupadas", "toggle"),
+                SectionItem("group:groupbar:font_size", "Groupbar font size", "Tamaño de fuente en las pestañas de grupos de ventanas", "stepper", 8, 20, 1),
+                SectionItem("group:groupbar:height", "Groupbar height", "Altura en píxeles de la barra de grupos", "stepper", 14, 36, 2),
+                SectionItem("group:groupbar:gradients", "Groupbar gradients", "Dibuja fondos con estilo degradado en las pestañas de grupo", "toggle"),
             ],
             "rules": [
-                SectionItem("rules:pavucontrol_float", "Float Pavucontrol", "Abre el panel de audio Pavucontrol como ventana flotante", "toggle"),
-                SectionItem("rules:calculator_float", "Float Calculator", "Abre la calculadora en modo flotante centrado", "toggle"),
+                SectionItem("rules:terminal_scroll", "Terminal touchpad scroll", "Velocidad de scroll touchpad en Alacritty/Kitty/Foot (o.window)", "slider", 0.2, 3.0, 0.1),
+                SectionItem("rules:browser_opaque", "Opaque browsers", "Desactiva la transparencia global en navegadores Chromium/Firefox", "toggle"),
+                SectionItem("rules:media_opaque", "Opaque media & video apps", "Mantiene 100% opacos reproductores y editores de vídeo (MPV, VLC, OBS)", "toggle"),
+                SectionItem("rules:pavucontrol_float", "Float Pavucontrol", "Abre el mezclador de sonido Pavucontrol como ventana flotante centrada", "toggle"),
+                SectionItem("rules:calculator_float", "Float Calculator", "Abre la calculadora en modo ventana flotante centrada", "toggle"),
+                SectionItem("rules:pip_float", "Picture-in-Picture float & pin", "Fija las ventanas Picture-in-Picture flotantes en esquina", "toggle"),
+                SectionItem("rules:steam_float", "Float Steam windows", "Abre Steam y su lista de amigos como ventanas flotantes", "toggle"),
+                SectionItem("rules:localsend_float", "Float LocalSend", "Abre LocalSend en ventana flotante centrada de 1100x700", "toggle"),
             ],
             "autostart": self._build_autostart_section_items(),
+            "bar": self._build_bar_section_items(),
             "themes": self._build_themes_section_items(),
             "omarchy": [
                 SectionItem("omarchy:theme", "Active Omarchy Theme", "Selecciona y aplica rápidamente el tema global de Omarchy", "select", options=themes),
@@ -321,13 +472,17 @@ class MecaTUI:
         }
 
     def run(self) -> None:
-        """Ciclo principal TUI en modo crudo y ventana flotante rectangular vertical centrada."""
+        """Ciclo principal TUI en modo crudo y ventana flotante rectangular vertical (más altura que anchura)."""
         if not sys.stdin.isatty():
             print("Error: meca debe ejecutarse en una terminal TTY.")
             return
 
-        # Convertir la ventana de terminal activa en flotante rectangular vertical y centrada
-        self._was_tiled = HyprIPC.ensure_floating_centered(width=760, height=920)
+        # Establecer título de ventana para que coincida con la regla vertical de Hyprland
+        sys.stdout.write("\033]0;MECA HyprConfig\007\033]2;MECA HyprConfig\007")
+        sys.stdout.flush()
+
+        # Convertir la ventana de terminal activa en flotante rectangular vertical (680x960: más altura que anchura)
+        self._was_tiled = HyprIPC.ensure_floating_centered(width=680, height=960)
 
         fd = sys.stdin.fileno()
         self.orig_termios = termios.tcgetattr(fd)
@@ -339,6 +494,10 @@ class MecaTUI:
             sys.stdout.flush()
 
             while self.running:
+                self._frame_count += 1
+                if self._frame_count == 2:
+                    # Re-aplicar geometría vertical por si la terminal tardó unos ms en mapearse en Wayland
+                    HyprIPC.ensure_floating_centered(width=680, height=960)
                 self.render()
                 self.handle_input(fd)
         finally:
@@ -354,17 +513,22 @@ class MecaTUI:
     # RENDERIZADO CON POSICIONAMIENTO EXACTO
     # ==========================
 
+    def _get_sidebar_width(self, cols: int) -> int:
+        return 22 if cols < 95 else 26
+
     def render(self) -> None:
-        cols, rows = shutil.get_terminal_size((90, 26))
-        sidebar_w = 26
+        cols, rows = shutil.get_terminal_size((84, 42))
+        sidebar_w = self._get_sidebar_width(cols)
         content_w = max(30, cols - sidebar_w - 1)
         buf: List[str] = []
 
         # 1. Barra de Título Superior en fila exacta 1 (\033[1;1H)
         ver = HyprIPC.get_version_info()
         title_left = " MECA HyprConfig "
-        unsaved_badge = " *CAMBIOS PENDIENTES* | " if self.has_unsaved_changes() else ""
-        title_right = f"{unsaved_badge}Hyprland {ver} | Tema: {self.theme_engine.current_theme} | q: Salir "
+        unsaved_badge = " *PENDIENTE* | " if self.has_unsaved_changes() else ""
+        title_right = f"{unsaved_badge}Hyprland {ver} | Tema: {self.theme_engine.current_theme} | q/Esc: Salir "
+        if len(title_left) + len(title_right) > cols:
+            title_right = f"Tema: {self.theme_engine.current_theme} | q/Esc: Salir "
         space_len = max(0, cols - len(title_left) - len(title_right))
         header_line = (title_left + (" " * space_len) + title_right)[:cols]
         buf.append(f"\033[1;1H" + self.theme_engine.style("bright_foreground", "accent", header_line, bold=True) + "\033[K")
@@ -383,17 +547,21 @@ class MecaTUI:
             buf.append(f"\033[{screen_y};{sidebar_w + 1}H{sep_styled}")
             buf.append(f"\033[{screen_y};{sidebar_w + 2}H{c_line}\033[K")
 
-        # 3. Barra Inferior de Estado en fila exacta 'rows' (sin corchetes, truncada a cols - 1)
-        keys_hint = " Tab: Foco │ r: Restablecer │ c: Cancelar │ a: Aplicar │ q: Salir "
-        if cols < 95:
-            keys_hint = " r:Restablecer │ c:Cancelar │ a:Aplicar │ q:Salir "
+        # 3. Barra Inferior de Estado en fila exacta 'rows' (con guía q/Esc: Salir)
+        keys_hint = " Tab: Foco │ r: Restablecer │ c: Cancelar │ a: Aplicar │ q/Esc: Salir "
+        if cols < 100:
+            keys_hint = " r:Restablecer │ c:Cancelar │ a:Aplicar │ q/Esc:Salir "
         max_status_w = max(8, cols - len(keys_hint) - 1)
         status_txt = f" {self.status_message}"[:max_status_w]
         footer_space = max(0, cols - 1 - len(status_txt) - len(keys_hint))
         footer_line = (status_txt + (" " * footer_space) + keys_hint)[:cols - 1]
         buf.append(f"\033[{rows};1H" + self.theme_engine.style("bright_foreground", "muted", footer_line) + "\033[K")
 
-        # 4. Ventana Modal (si está activa)
+        # 4. Menú desplegable (Dropdown) si está abierto sobre una opción "select"
+        if self.dropdown_open and not self.modal_state:
+            buf.extend(self._render_dropdown_overlay(cols, rows, sidebar_w))
+
+        # 5. Ventana Modal (si está activa)
         if self.modal_state:
             buf.extend(self._render_modal_overlay(cols, rows))
 
@@ -422,8 +590,8 @@ class MecaTUI:
                 break
 
             is_sel = (idx == self.current_section_idx)
-            is_hover = (idx == self.hover_sidebar_idx and not self.modal_state)
-            is_active_pane = (self.active_pane == "sidebar" and not self.modal_state)
+            is_hover = (idx == self.hover_sidebar_idx and not self.modal_state and not self.dropdown_open)
+            is_active_pane = (self.active_pane == "sidebar" and not self.modal_state and not self.dropdown_open)
 
             screen_row = 2 + len(lines)
             self._sidebar_click_map[screen_row] = idx
@@ -447,6 +615,77 @@ class MecaTUI:
 
         return lines[:max_rows]
 
+    def _render_theme_card_3lines(
+        self,
+        item: SectionItem,
+        width: int,
+        is_sel: bool,
+        is_hover: bool,
+    ) -> Tuple[str, str, str, Tuple[int, int]]:
+        """
+        Renderiza un tema guardado con apariencia de contenedor de tarjeta cuadrada:
+        ┌──────────────────────────────────────────────────────────────────┐
+        │ ■ nombre [ACTIVO]    ██ ██ ██ ██  Modo: dark    ┃ Activar │      │
+        └──────────────────────────────────────────────────────────────────┘
+        """
+        u_name = item.name
+        info = self.theme_engine.get_theme_info(u_name)
+        colors = info.get("colors", {})
+        mode = info.get("mode", "dark")
+        is_act = (
+            self.theme_engine.normalize_theme_slug(u_name)
+            == self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme)
+        )
+
+        card_w = max(28, width - 3)
+        inner_w = card_w - 2
+
+        border_col = "accent" if (is_sel or is_hover) else ("bright_foreground" if is_act else "muted")
+        card_bg = "soft_hover" if is_hover else ("soft_selection" if is_sel else ("soft_muted" if is_act else None))
+
+        # Construir muestras de color (swatches) reales de la paleta del tema
+        swatches_styled = ""
+        for c_key in ("accent", "background", "foreground", "selection"):
+            hex_c = str(colors.get(c_key, "#888888"))
+            r, g, b = self.theme_engine.hex_to_rgb(hex_c)
+            swatches_styled += f"\033[38;2;{r};{g};{b}m██\033[0m"
+            if card_bg:
+                bg_r, bg_g, bg_b = self.theme_engine.hex_to_rgb(self.theme_engine.colors.get(card_bg, "#1a1b26"))
+                swatches_styled += f"\033[48;2;{bg_r};{bg_g};{bg_b}m \033[0m"
+            else:
+                swatches_styled += " "
+        swatches_vis_w = 12  # 4 * ("██" + " ")
+
+        badge = " [ACTIVO]" if is_act else ""
+        btn_txt = " [Activo] " if is_act else " [Activar] "
+        btn_vis_w = len(btn_txt)
+
+        title_str = f" ■ {u_name}{badge}"
+        meta_str = f" ({mode}) "
+        avail_title_w = max(8, inner_w - swatches_vis_w - btn_vis_w - len(meta_str) - 2)
+        left_plain = (title_str[:avail_title_w] + meta_str).ljust(avail_title_w + len(meta_str))
+        pad_mid_w = max(1, inner_w - len(left_plain) - swatches_vis_w - btn_vis_w)
+
+        top_border = " " + self.theme_engine.style(border_col, None, "┌" + ("─" * inner_w) + "┐", bold=(is_sel or is_hover))
+        bot_border = " " + self.theme_engine.style(border_col, None, "└" + ("─" * inner_w) + "┘", bold=(is_sel or is_hover))
+
+        left_styled = self.theme_engine.style("bright_foreground", card_bg, left_plain, bold=True)
+        pad_styled = self.theme_engine.style("foreground", card_bg, " " * pad_mid_w)
+        btn_fg = "accent" if (is_sel or is_hover or is_act) else "bright_foreground"
+        btn_styled = self.theme_engine.style(btn_fg, card_bg, btn_txt, bold=True)
+
+        mid_line = (
+            " "
+            + self.theme_engine.style(border_col, None, "│", bold=(is_sel or is_hover))
+            + left_styled
+            + swatches_styled
+            + pad_styled
+            + btn_styled
+            + self.theme_engine.style(border_col, None, "│", bold=(is_sel or is_hover))
+        )
+
+        return top_border, mid_line, bot_border, (1, card_w)
+
     def _render_content(self, width: int, max_rows: int, sidebar_w: int) -> List[str]:
         lines: List[str] = []
         sec_meta = self.SECTIONS[self.current_section_idx]
@@ -462,12 +701,21 @@ class MecaTUI:
 
         if sec_id == "autostart":
             self.section_items["autostart"] = self._build_autostart_section_items()
+        elif sec_id == "bar":
+            self.section_items["bar"] = self._build_bar_section_items()
         elif sec_id == "themes":
             self.section_items["themes"] = self._build_themes_section_items()
 
         items = self.section_items.get(sec_id, [])
         is_active_pane = (self.active_pane == "content" and not self.modal_state)
         content_start_x = sidebar_w + 2
+
+        # Asegurar que selected_item_idx no apunte a un separador "header"
+        if items and 0 <= self.selected_item_idx < len(items) and items[self.selected_item_idx].item_type == "header":
+            if self.selected_item_idx + 1 < len(items):
+                self.selected_item_idx += 1
+            elif self.selected_item_idx > 0:
+                self.selected_item_idx -= 1
 
         # Reservamos las últimas 4 líneas para el separador (1) + botones compactos de 3 líneas
         buttons_block_h = 4
@@ -487,14 +735,52 @@ class MecaTUI:
 
         for i in range(self.content_scroll_offset, visible_end):
             item = items[i]
-            is_hover_row = (i == self.hover_item_idx and not self.modal_state)
-            is_sel = (i == self.selected_item_idx and is_active_pane) or is_hover_row
-            hover_sub = self.hover_subcontrol if is_hover_row else None
+            item_screen_row = 2 + len(lines)
 
+            # 1. Separador visual de sub-sección ("header")
+            if item.item_type == "header":
+                hdr_title = f" ━━ {item.name} "
+                rem_bars = max(2, width - len(hdr_title) - 2)
+                l1 = self.theme_engine.style("accent", None, hdr_title + ("━" * rem_bars), bold=True)
+                l2 = " " + self.theme_engine.fg("muted", item.desc[:width - 2])
+                l3 = ""
+                lines.append(l1)
+                lines.append(l2)
+                lines.append(l3)
+                continue
+
+            is_hover_row = (i == self.hover_item_idx and not self.modal_state and not self.dropdown_open)
+            is_sel = (i == self.selected_item_idx and is_active_pane) or is_hover_row
+
+            # 2. Contenedor con borde cuadrado / tarjeta para temas guardados ("theme_card")
+            if item.item_type == "theme_card":
+                t_top, t_mid, t_bot, (c_rel_start, c_rel_end) = self._render_theme_card_3lines(
+                    item, width, is_sel, is_hover_row
+                )
+                card_x_start = content_start_x + c_rel_start
+                card_x_end = content_start_x + c_rel_end
+                click_info = {
+                    "item_idx": i,
+                    "item": item,
+                    "control_range": (card_x_start, card_x_end),
+                    "minus_range": (0, 0),
+                    "plus_range": (0, 0),
+                    "slider_range": (0, 0),
+                    "row_y": item_screen_row,
+                }
+                self._content_click_map[item_screen_row] = click_info
+                self._content_click_map[item_screen_row + 1] = click_info
+                self._content_click_map[item_screen_row + 2] = click_info
+                lines.append(t_top)
+                lines.append(t_mid)
+                lines.append(t_bot)
+                continue
+
+            # 3. Control estándar de 3 líneas
+            hover_sub = self.hover_subcontrol if is_hover_row else None
             c_top, c_mid, c_bot, ctrl_vis_w = self._format_item_control_3lines(item, is_sel, hover_sub)
             left_max_w = max(12, width - ctrl_vis_w - 3)
 
-            item_screen_row = 2 + len(lines)
             control_x_start = content_start_x + left_max_w + 1
             control_x_end = control_x_start + ctrl_vis_w - 1
 
@@ -505,6 +791,7 @@ class MecaTUI:
                 "minus_range": (control_x_start, control_x_start + 4),
                 "plus_range": (control_x_end - 4, control_x_end),
                 "slider_range": (control_x_start, control_x_start + 10),
+                "row_y": item_screen_row,
             }
             self._content_click_map[item_screen_row] = click_info
             self._content_click_map[item_screen_row + 1] = click_info
@@ -542,6 +829,83 @@ class MecaTUI:
 
         return lines[:max_rows]
 
+    def _open_dropdown_for_item(self, item: SectionItem, anchor_y: int = 8, anchor_x: int = 45) -> None:
+        """Abre el menú desplegable (dropdown) para un control de tipo 'select'."""
+        if not item.options:
+            return
+        self.dropdown_open = True
+        self.dropdown_item = item
+        self.dropdown_options = list(item.options)
+        cur_val = str(self._get_item_value(item))
+        try:
+            self.dropdown_idx = self.dropdown_options.index(cur_val)
+        except ValueError:
+            self.dropdown_idx = 0
+        self.dropdown_scroll = max(0, self.dropdown_idx - 3)
+        self.hover_dropdown_idx = None
+        self.dropdown_anchor_y = anchor_y
+        self.dropdown_anchor_x = anchor_x
+
+    def _render_dropdown_overlay(self, cols: int, rows: int, sidebar_w: int) -> List[str]:
+        """Renderiza el menú desplegable interactivo sobre la opción seleccionada."""
+        self._dropdown_row_map.clear()
+        if not self.dropdown_item or not self.dropdown_options:
+            return []
+
+        opts = self.dropdown_options
+        max_vis = min(8, len(opts), max(4, rows - 8))
+        if self.dropdown_idx < self.dropdown_scroll:
+            self.dropdown_scroll = self.dropdown_idx
+        elif self.dropdown_idx >= self.dropdown_scroll + max_vis:
+            self.dropdown_scroll = self.dropdown_idx - max_vis + 1
+        self.dropdown_scroll = max(0, min(self.dropdown_scroll, max(0, len(opts) - max_vis)))
+
+        max_opt_len = max(len(str(o)) for o in opts)
+        inner_w = max(20, min(42, max_opt_len + 8))
+        box_w = inner_w + 2
+        box_h = max_vis + 2
+
+        # Posicionar el desplegable alineado a la derecha del panel de contenido, justo debajo o encima del control
+        start_x = max(sidebar_w + 3, cols - box_w - 2)
+        start_y = self.dropdown_anchor_y + 3
+        if start_y + box_h >= rows - 1:
+            start_y = max(3, self.dropdown_anchor_y - box_h)
+
+        self._dropdown_box_bounds = (start_y, start_y + box_h - 1, start_x, start_x + box_w - 1)
+        cur_val = str(self._get_item_value(self.dropdown_item))
+
+        overlay: List[str] = []
+        hdr_hint = " ▲ " if self.dropdown_scroll > 0 else "───"
+        top_line = "┌" + ("─" * (inner_w - 3)) + hdr_hint + "┐"
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("accent", "background", top_line, bold=True))
+
+        for r_off in range(max_vis):
+            opt_idx = self.dropdown_scroll + r_off
+            scr_y = start_y + 1 + r_off
+            opt_str = str(opts[opt_idx])
+            self._dropdown_row_map[scr_y] = opt_idx
+
+            is_sel = (opt_idx == self.dropdown_idx)
+            is_hov = (opt_idx == self.hover_dropdown_idx)
+            is_cur = (opt_str == cur_val)
+
+            check = "✓" if is_cur else ("▸" if (is_sel or is_hov) else " ")
+            row_txt = f" {check} {opt_str}"[:inner_w].ljust(inner_w)
+            row_bg = "soft_hover" if is_hov else ("soft_selection" if is_sel else "background")
+            row_fg = "bright_foreground" if (is_sel or is_hov or is_cur) else "foreground"
+
+            overlay.append(
+                f"\033[{scr_y};{start_x}H"
+                + self.theme_engine.style("accent", "background", "┃", bold=True)
+                + self.theme_engine.style(row_fg, row_bg, row_txt, bold=(is_sel or is_hov or is_cur))
+                + self.theme_engine.style("accent", "background", "│", bold=True)
+            )
+
+        ftr_hint = " ▼ " if (self.dropdown_scroll + max_vis < len(opts)) else "━━━"
+        bot_line = "┗" + ("━" * (inner_w - 3)) + ftr_hint + "┙"
+        overlay.append(f"\033[{start_y + max_vis + 1};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
+        return overlay
+
     def _render_3d_buttons(self, width: int, btn_top_screen_y: int, content_start_x: int) -> List[str]:
         """
         Dibuja los 3 botones inferiores compactos de 3 líneas con bisel 3D Unicode y destello suave:
@@ -560,19 +924,19 @@ class MecaTUI:
 
         gap = 2
         total_btns_w = sum(len(lbl) + 2 for _, _, lbl in buttons_spec) + gap * (len(buttons_spec) - 1)
-        left_pad = max(2, width - total_btns_w - 2)
+        left_pad = max(1, width - total_btns_w - 2)
 
         row0_parts = [" " * left_pad]
         row1_parts = [" " * left_pad]
         row2_parts = [" " * left_pad]
 
         cur_rel_x = left_pad
-        is_btn_pane = (self.active_pane == "buttons" and not self.modal_state)
+        is_btn_pane = (self.active_pane == "buttons" and not self.modal_state and not self.dropdown_open)
 
         for btn_key, btn_idx, label in buttons_spec:
             inner_w = len(label)
             btn_w = inner_w + 2
-            is_hover_btn = (self.hover_button_key == btn_key and not self.modal_state)
+            is_hover_btn = (self.hover_button_key == btn_key and not self.modal_state and not self.dropdown_open)
             is_sel = (is_btn_pane and self.selected_button_idx == btn_idx) or is_hover_btn
             is_primary = (btn_key == "save")
 
@@ -681,7 +1045,7 @@ class MecaTUI:
         elif item.item_type == "select":
             raw_lbl = f" {val} ▾ "
             inner_w = len(raw_lbl)
-            c_hov = (hover_sub == "control")
+            c_hov = (hover_sub == "control") or (self.dropdown_open and self.dropdown_item == item)
             c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
             inner_bg = "soft_hover" if c_hov else ("soft_selection" if is_sel else None)
             inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=(is_sel or c_hov))
@@ -731,13 +1095,14 @@ class MecaTUI:
         Renderiza ventanas modales centradas para:
         - "confirm_section_change": aplicar/descartar cambios al cambiar de sección
         - "confirm_reset": confirmar restablecimiento a valores predeterminados
-        - "input_autostart": buscador y selector de aplicaciones, servicios o comandos para autostart.lua
+        - "input_autostart": selector desplegable de aplicaciones/servicios o entrada de comando
         - "input_theme_hex": ingresar color hexadecimal personalizado para el tema Omarchy
         - "create_theme": crear y agregar un nuevo tema Omarchy
         """
         self._modal_button_click_map.clear()
         self._modal_kind_click_range = (0, 0, 0)
         self._modal_mode_click_range = (0, 0, 0)
+        self._autostart_dropdown_btn_range = (0, 0, 0, 0)
         self._autostart_list_click_map.clear()
 
         if self.modal_state == "input_autostart":
@@ -838,87 +1203,133 @@ class MecaTUI:
 
     def _render_autostart_modal(self, cols: int, rows: int) -> List[str]:
         """
-        Renderiza el modal con buscador en tiempo real y selector interactivo de aplicaciones
-        instaladas para agregarlas a ~/.config/hypr/autostart.lua.
+        Renderiza el modal para agregar a Autostart:
+        - La selección de aplicación instalada es un selector desplegable (dropdown)
+          que SOLO funciona cuando está seleccionado el tipo 'Aplicación / Servicio' ('launch').
+        - Cuando se elige 'Comando / Script' ('exec'), el selector desplegable de aplicaciones
+          queda deshabilitado.
         """
-        title = " BUSCADOR Y SELECTOR DE APLICACIONES (AUTOSTART) "
+        is_app_mode = (self.modal_input_kind == "launch")
+        if not is_app_mode:
+            self.autostart_dropdown_open = False
+
+        title = " AGREGAR A AUTOSTART (APLICACION / SERVICIO / COMANDO) "
         kind_val = (
             "Aplicacion / Servicio (o.launch_on_start)"
-            if self.modal_input_kind == "launch"
-            else "Comando / Script      (o.exec_on_start)  "
+            if is_app_mode
+            else "Comando personalizado (o.exec_on_start)  "
         )
 
-        mw = min(68, cols - 4)
+        mw = min(66, cols - 4)
         inner_mw = mw - 2
-        list_rows = 6
-        mh = 13 + list_rows  # 19 filas en total
+        show_list = is_app_mode and self.autostart_dropdown_open
+        list_rows = 6 if show_list else 0
+        mh = 16 + list_rows
         start_x = max(2, (cols - mw) // 2)
         start_y = max(2, (rows - mh) // 2)
 
         overlay: List[str] = []
         top_line = "┌" + ("─" * inner_mw) + "┐"
-        title_centered = title.center(inner_mw)[:inner_mw]
+        title_centered = title[:inner_mw].center(inner_mw)
         sep_line = "├" + ("─" * inner_mw) + "┤"
         bot_line = "┗" + ("━" * inner_mw) + "┙"
 
         selector_line = f"  Tipo (Tab/Clic): {kind_val} ▾".ljust(inner_mw)[:inner_mw]
         self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
 
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
+
+        # Selector desplegable de aplicación (filas start_y + 4..6)
         box_w = inner_mw - 6
+        filtered = self._get_filtered_autostart_apps()
+        if is_app_mode:
+            arrow_char = "▴" if self.autostart_dropdown_open else "▾"
+            if self.autostart_selected_app_name:
+                dd_txt = f" {self.autostart_selected_app_name} ({self.modal_input_text})"
+            elif filtered and 0 <= self.autostart_app_idx < len(filtered):
+                cur_a = filtered[self.autostart_app_idx]
+                dd_txt = f" {cur_a['name']} — {cur_a['cmd']}"
+            else:
+                dd_txt = f" Desplegar lista de aplicaciones ({len(filtered)} disponibles)..."
+            dd_inner = (dd_txt[: box_w - 3].ljust(box_w - 3)) + f" {arrow_char} "
+            dd_lbl = "  Seleccionar aplicacion instalada (Clic o ↓ para desplegar):"
+            dd_border_col = "accent" if self.autostart_dropdown_open else "bright_foreground"
+            dd_bg = "soft_hover" if self.autostart_dropdown_open else "soft_selection"
+            self._autostart_dropdown_btn_range = (start_y + 5, start_y + 6, start_x + 2, start_x + inner_mw - 2)
+        else:
+            dd_inner = " [Deshabilitado: solo activo en modo Aplicacion / Servicio] "[:box_w].ljust(box_w)
+            dd_lbl = "  Selector desplegable de aplicacion (Inactivo en modo Comando):"
+            dd_border_col = "muted"
+            dd_bg = "background"
+            self._autostart_dropdown_btn_range = (0, 0, 0, 0)
+
+        dd_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+        dd_mid = f"  ┃{dd_inner}│  ".ljust(inner_mw)[:inner_mw]
+        dd_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+
+        overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + dd_lbl.ljust(inner_mw)[:inner_mw] + "│"))
+        overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style(dd_border_col, "background", "┃" + dd_top + "│"))
+        overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style(dd_border_col, dd_bg, "┃" + dd_mid + "│", bold=is_app_mode))
+        overlay.append(f"\033[{start_y + 7};{start_x}H" + self.theme_engine.style(dd_border_col, "background", "┃" + dd_bot + "│"))
+
+        cur_y = start_y + 8
+
+        # Si el menú desplegable de aplicaciones está abierto (solo en modo 'launch')
+        if show_list:
+            if self.autostart_app_idx >= len(filtered):
+                self.autostart_app_idx = max(0, len(filtered) - 1)
+            if self.autostart_app_idx < self.autostart_app_scroll:
+                self.autostart_app_scroll = self.autostart_app_idx
+            elif self.autostart_app_idx >= self.autostart_app_scroll + list_rows:
+                self.autostart_app_scroll = self.autostart_app_idx - list_rows + 1
+            self.autostart_app_scroll = max(0, min(self.autostart_app_scroll, max(0, len(filtered) - list_rows)))
+
+            self._autostart_list_x_range = (start_x + 3, start_x + inner_mw - 3)
+            for r_off in range(list_rows):
+                row_y = cur_y + r_off
+                f_idx = self.autostart_app_scroll + r_off
+                if f_idx < len(filtered):
+                    app = filtered[f_idx]
+                    self._autostart_list_click_map[row_y] = f_idx
+                    is_app_sel = (f_idx == self.autostart_app_idx)
+                    is_app_hov = (f_idx == self.hover_autostart_app_idx)
+                    marker = " ▸ " if (is_app_sel or is_app_hov) else "   "
+                    name_w = max(14, box_w - 24)
+                    cmd_w = max(8, box_w - name_w - 5)
+                    app_name = app["name"][:name_w].ljust(name_w)
+                    app_cmd = app["cmd"][:cmd_w].rjust(cmd_w)
+                    item_row = f"{marker}{app_name} {app_cmd} "[:box_w].ljust(box_w)
+                    row_bg = "soft_hover" if is_app_hov else ("soft_selection" if is_app_sel else "soft_muted")
+                    row_fg = "bright_foreground" if (is_app_sel or is_app_hov) else "foreground"
+                    overlay.append(
+                        f"\033[{row_y};{start_x}H"
+                        + self.theme_engine.style("foreground", "background", "┃  │")
+                        + self.theme_engine.style(row_fg, row_bg, item_row, bold=(is_app_sel or is_app_hov))
+                        + self.theme_engine.style("foreground", "background", "│  │")
+                    )
+                else:
+                    empty_dd = (" " * box_w)
+                    overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("foreground", "background", f"┃  │{empty_dd}│  │"))
+            cur_y += list_rows
+
+        # Campo de texto para buscar aplicación (en modo launch) o escribir comando (en modo exec)
+        input_lbl = (
+            "  Filtrar aplicacion o editar comando a lanzar:"
+            if is_app_mode
+            else "  Escribir comando o script para o.exec_on_start:"
+        )
         shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
         input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
         input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
         input_bot = ("  ┗" + ("━" * box_w) + "┙  ").ljust(inner_mw)[:inner_mw]
 
-        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
-        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
-        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
-        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
-        overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + "  Buscar aplicacion o escribir comando personalizado:".ljust(inner_mw)[:inner_mw] + "│"))
-        overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
-        overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
-        overlay.append(f"\033[{start_y + 7};{start_x}H" + self.theme_engine.style("accent", "background", "┃" + input_bot + "│"))
-
-        filtered = self._get_filtered_autostart_apps()
-        if self.autostart_app_idx >= len(filtered):
-            self.autostart_app_idx = max(0, len(filtered) - 1)
-        if self.autostart_app_idx < self.autostart_app_scroll:
-            self.autostart_app_scroll = self.autostart_app_idx
-        elif self.autostart_app_idx >= self.autostart_app_scroll + list_rows:
-            self.autostart_app_scroll = self.autostart_app_idx - list_rows + 1
-        self.autostart_app_scroll = max(0, min(self.autostart_app_scroll, max(0, len(filtered) - list_rows)))
-
-        count_lbl = f"  Selector de aplicaciones ({len(filtered)} coincidencias — ↑/↓, Rueda o Clic):"
-        overlay.append(f"\033[{start_y + 8};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + count_lbl.ljust(inner_mw)[:inner_mw] + "│"))
-
-        self._autostart_list_x_range = (start_x + 2, start_x + inner_mw - 2)
-        for r_off in range(list_rows):
-            row_y = start_y + 9 + r_off
-            f_idx = self.autostart_app_scroll + r_off
-            if f_idx < len(filtered):
-                app = filtered[f_idx]
-                self._autostart_list_click_map[row_y] = f_idx
-                is_app_sel = (f_idx == self.autostart_app_idx)
-                is_app_hov = (f_idx == self.hover_autostart_app_idx)
-                marker = " ▸ " if (is_app_sel or is_app_hov) else "   "
-                name_w = max(16, inner_mw - 28)
-                cmd_w = max(10, inner_mw - name_w - 5)
-                app_name = app["name"][:name_w].ljust(name_w)
-                app_cmd = app["cmd"][:cmd_w].rjust(cmd_w)
-                row_txt = f"{marker}{app_name} {app_cmd} "[:inner_mw].ljust(inner_mw)
-                row_bg = "soft_hover" if is_app_hov else ("soft_selection" if is_app_sel else "background")
-                row_fg = "bright_foreground" if (is_app_sel or is_app_hov) else "foreground"
-                overlay.append(
-                    f"\033[{row_y};{start_x}H"
-                    + self.theme_engine.style("foreground", "background", "┃")
-                    + self.theme_engine.style(row_fg, row_bg, row_txt, bold=(is_app_sel or is_app_hov))
-                    + self.theme_engine.style("foreground", "background", "│")
-                )
-            elif r_off == 0 and not filtered:
-                custom_msg = f"   Comando personalizado: '{self.modal_input_text.strip()}'".ljust(inner_mw)[:inner_mw]
-                overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + custom_msg + "│"))
-            else:
-                overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + (" " * inner_mw) + "│"))
+        overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + input_lbl.ljust(inner_mw)[:inner_mw] + "│"))
+        overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
+        overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
+        overlay.append(f"\033[{cur_y + 3};{start_x}H" + self.theme_engine.style("accent", "background", "┃" + input_bot + "│"))
 
         modal_btns = [
             (0, " Cancelar "),
@@ -929,7 +1340,7 @@ class MecaTUI:
         pad_left = max(1, (inner_mw - btns_total_w) // 2)
         pad_right = max(0, inner_mw - btns_total_w - pad_left)
 
-        btn_y_top = start_y + 9 + list_rows
+        btn_y_top = cur_y + 4
         self._modal_button_row_range = (btn_y_top, btn_y_top + 2)
 
         b_r0 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
@@ -986,7 +1397,7 @@ class MecaTUI:
         bot_line = "┗" + ("━" * inner_mw) + "┙"
 
         base_line = f"  Plantilla base (↑/↓ o clic): {self.modal_base_theme} ▾".ljust(inner_mw)[:inner_mw]
-        mode_line = f"  Modo inicial (Clic):         {self.modal_theme_mode} ▾".ljust(inner_mw)[:inner_mw]
+        mode_line = f"  Modo inicial (Tab o clic):   {self.modal_theme_mode} ▾".ljust(inner_mw)[:inner_mw]
         self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
         self._modal_mode_click_range = (start_y + 4, start_x + 2, start_x + inner_mw - 2)
 
@@ -1074,11 +1485,9 @@ class MecaTUI:
         sep_line = "├" + ("─" * inner_mw) + "┤"
         bot_line = "┗" + ("━" * inner_mw) + "┙"
 
-        # Selector de propiedad clicable en fila start_y + 3
         selector_line = f"  Propiedad (↑/↓ o clic): {kind_val}".ljust(inner_mw)[:inner_mw]
         self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
 
-        # Campo de texto con cursor█
         box_w = inner_mw - 6
         shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
         input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
@@ -1144,6 +1553,142 @@ class MecaTUI:
         overlay.append(f"\033[{start_y + 11};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
         return overlay
 
+    # ==========================
+    # LECTURA Y ESCRITURA DE VALORES
+    # ==========================
+
+    KEY_TO_SETTING: Dict[str, Tuple[str, Any, Any]] = {
+        # General
+        "general:gaps_in": ("gaps_in", int, 5),
+        "general:gaps_out": ("gaps_out", int, 10),
+        "general:border_size": ("border_size", int, 2),
+        "general:resize_on_border": ("resize_on_border", bool, False),
+        "general:extend_border_grab_area": ("extend_border_grab_area", int, 15),
+        "general:hover_icon_on_border": ("hover_icon_on_border", bool, True),
+        "general:layout": ("layout", str, "dwindle"),
+        "general:allow_tearing": ("allow_tearing", bool, False),
+        "general:no_focus_fallback": ("no_focus_fallback", bool, False),
+        "general:snap:enabled": ("snap_enabled", bool, False),
+        "general:snap:window_gap": ("snap_window_gap", int, 10),
+        "general:snap:monitor_gap": ("snap_monitor_gap", int, 10),
+        "general:snap:border_overlap": ("snap_border_overlap", bool, False),
+        # Decoration
+        "decoration:rounding": ("rounding", int, 0),
+        "decoration:rounding_power": ("rounding_power", float, 2.0),
+        "decoration:active_opacity": ("active_opacity", float, 1.0),
+        "decoration:inactive_opacity": ("inactive_opacity", float, 1.0),
+        "decoration:fullscreen_opacity": ("fullscreen_opacity", float, 1.0),
+        "decoration:dim_inactive": ("dim_inactive", bool, False),
+        "decoration:dim_strength": ("dim_strength", float, 0.15),
+        "decoration:dim_special": ("dim_special", float, 0.20),
+        "decoration:blur:enabled": ("blur_enabled", bool, False),
+        "decoration:blur:size": ("blur_size", int, 8),
+        "decoration:blur:passes": ("blur_passes", int, 1),
+        "decoration:blur:new_optimizations": ("blur_new_optimizations", bool, True),
+        "decoration:blur:xray": ("blur_xray", bool, False),
+        "decoration:blur:ignore_opacity": ("blur_ignore_opacity", bool, True),
+        "decoration:blur:vibrancy": ("blur_vibrancy", float, 0.17),
+        "decoration:shadow:enabled": ("shadow_enabled", bool, False),
+        "decoration:shadow:range": ("shadow_range", int, 4),
+        "decoration:shadow:render_power": ("shadow_render_power", int, 3),
+        "decoration:shadow:sharp": ("shadow_sharp", bool, False),
+        # Animations
+        "animations:enabled": ("animations_enabled", bool, True),
+        "animations:workspace_wraparound": ("animations_wraparound", bool, False),
+        "animations:preset": ("animation_preset", str, "omarchy"),
+        "animations:windows": ("anim_windows", str, "popin 87%"),
+        "animations:windows_speed": ("anim_windows_speed", float, 3.8),
+        "animations:fade_enabled": ("anim_fade_enabled", bool, True),
+        "animations:layers": ("anim_layers", str, "fade"),
+        "animations:workspaces_enabled": ("anim_workspaces_enabled", bool, False),
+        "animations:workspaces": ("anim_workspaces", str, "slide"),
+        "animations:special": ("anim_special", str, "slidevert"),
+        # Cursor
+        "cursor:size": ("cursor_size", int, 24),
+        "cursor:no_hardware_cursors": ("no_hw_cursors", bool, True),
+        "cursor:inactive_timeout": ("cursor_timeout", int, 0),
+        "cursor:hide_on_key_press": ("cursor_hide_on_key", bool, True),
+        "cursor:hide_on_touch": ("cursor_hide_on_touch", bool, True),
+        "cursor:warp_on_change_workspace": ("cursor_warp_workspace", int, 1),
+        "cursor:zoom_factor": ("cursor_zoom", float, 1.0),
+        "cursor:zoom_rigid": ("cursor_zoom_rigid", bool, False),
+        # Keybinds & Input
+        "input:kb_layout": ("kb_layout", str, "us"),
+        "input:repeat_rate": ("repeat_rate", int, 40),
+        "input:repeat_delay": ("repeat_delay", int, 250),
+        "input:numlock_by_default": ("numlock", bool, True),
+        "binds:omarchy_default_bindings": ("omarchy_default_bindings", bool, True),
+        "binds:omarchy_preinstalled_bindings": ("omarchy_preinstalled_bindings", bool, True),
+        "binds:hide_special": ("binds_hide_special", bool, True),
+        "binds:workspace_back_forth": ("binds_workspace_back_forth", bool, False),
+        "binds:allow_cycles": ("binds_allow_cycles", bool, False),
+        # Devices
+        "input:follow_mouse": ("follow_mouse", int, 1),
+        "input:mouse_refocus": ("mouse_refocus", bool, True),
+        "input:sensitivity": ("sensitivity", float, 0.0),
+        "input:accel_profile": ("accel_profile", str, "flat"),
+        "input:mouse_natural_scroll": ("mouse_natural_scroll", bool, False),
+        "input:left_handed": ("left_handed", bool, False),
+        "input:touchpad:natural_scroll": ("natural_scroll", bool, False),
+        "input:touchpad:scroll_factor": ("touchpad_scroll_factor", float, 0.4),
+        "input:touchpad:clickfinger_behavior": ("clickfinger", bool, True),
+        "input:touchpad:tap-to-click": ("tap_to_click", bool, True),
+        "input:touchpad:disable_while_typing": ("disable_typing", bool, True),
+        "input:touchpad:drag_3fg": ("touchpad_drag_3fg", int, 0),
+        "gestures:workspace_swipe": ("workspace_swipe", bool, False),
+        # Monitors
+        "display:xwayland_zero_scaling": ("xwayland_zero_scaling", bool, True),
+        # Workspaces & Misc
+        "workspace:count": ("workspace_count", int, 5),
+        "workspace:layout_toggle": ("workspace_layout", str, "dwindle"),
+        "misc:focus_on_activate": ("misc_focus_on_activate", bool, True),
+        "misc:dpms_key": ("misc_dpms_key", bool, True),
+        "misc:dpms_mouse": ("misc_dpms_mouse", bool, True),
+        "misc:focus_under_fs": ("misc_focus_under_fs", int, 1),
+        "misc:animate_resizes": ("misc_animate_resizes", bool, False),
+        "misc:animate_dragging": ("misc_animate_dragging", bool, False),
+        # Layouts
+        "dwindle:force_split": ("dwindle_force_split", int, 2),
+        "dwindle:preserve_split": ("dwindle_preserve_split", bool, True),
+        "dwindle:smart_split": ("dwindle_smart_split", bool, False),
+        "dwindle:smart_resizing": ("dwindle_smart_resizing", bool, True),
+        "dwindle:split_ratio": ("dwindle_split_ratio", float, 1.0),
+        "layout:single_window_aspect": ("single_window_aspect", str, "0 0"),
+        "master:new_status": ("master_new_status", str, "master"),
+        "master:mfact": ("master_mfact", float, 0.55),
+        "master:orientation": ("master_orientation", str, "left"),
+        "scrolling:column_width": ("scrolling_column_width", float, 0.49),
+        "group:groupbar:enabled": ("groupbar_enabled", bool, True),
+        "group:groupbar:font_size": ("groupbar_font_size", int, 12),
+        "group:groupbar:height": ("groupbar_height", int, 22),
+        "group:groupbar:gradients": ("groupbar_gradients", bool, True),
+        # Rules
+        "rules:terminal_scroll": ("rules_terminal_scroll", float, 1.5),
+        "rules:browser_opaque": ("rules_browser_opaque", bool, True),
+        "rules:media_opaque": ("rules_media_opaque", bool, True),
+        "rules:pavucontrol_float": ("rules_pavucontrol_float", bool, True),
+        "rules:calculator_float": ("rules_calculator_float", bool, True),
+        "rules:pip_float": ("rules_pip_float", bool, True),
+        "rules:steam_float": ("rules_steam_float", bool, True),
+        "rules:localsend_float": ("rules_localsend_float", bool, True),
+        # Barra Superior Omarchy
+        "bar:visible": ("bar_visible", bool, True),
+        "bar:position": ("bar_position", str, "top"),
+        "bar:transparent": ("bar_transparent", bool, False),
+        "bar:center_anchor": ("bar_center_anchor", str, "omarchy.clock"),
+        "bar:clock_format": ("bar_clock_format", str, "ddd d MMM h:mm AP"),
+        "bar:clock_alt_format": ("bar_clock_alt_format", str, "d MMMM 'W'ww yyyy"),
+        "bar:idle_screensaver": ("idle_screensaver", int, 150),
+        "bar:idle_lock": ("idle_lock", int, 300),
+        # Temas Omarchy
+        "omarchy:theme_mode": ("omarchy_theme_mode", str, "dark"),
+        "omarchy:theme_accent": ("omarchy_theme_accent", str, "#E31B23"),
+        "omarchy:theme_bg": ("omarchy_theme_bg", str, "#08080B"),
+        "omarchy:theme_fg": ("omarchy_theme_fg", str, "#d8d8d8"),
+        "omarchy:theme_sel": ("omarchy_theme_sel", str, "#45475a"),
+        "omarchy:icons": ("omarchy_icons", str, "Adwaita"),
+    }
+
     def _get_item_value(self, item: SectionItem) -> Any:
         """Obtiene el valor actual de la variable en memoria."""
         key = item.key
@@ -1154,73 +1699,46 @@ class MecaTUI:
                 return bool(self.autostart_items[idx].get("enabled", False))
             return False
 
-        key_defaults = {
-            "general:gaps_in": ("gaps_in", 5),
-            "general:gaps_out": ("gaps_out", 10),
-            "general:border_size": ("border_size", 2),
-            "general:resize_on_border": ("resize_on_border", True),
-            "general:layout": ("layout", "dwindle"),
-            "general:allow_tearing": ("allow_tearing", False),
-            "general:snap:enabled": ("snap_enabled", False),
-            "decoration:rounding": ("rounding", 0),
-            "decoration:active_opacity": ("active_opacity", 1.0),
-            "decoration:inactive_opacity": ("inactive_opacity", 0.95),
-            "decoration:dim_inactive": ("dim_inactive", False),
-            "decoration:dim_strength": ("dim_strength", 0.15),
-            "decoration:blur:enabled": ("blur_enabled", True),
-            "decoration:blur:size": ("blur_size", 5),
-            "decoration:blur:passes": ("blur_passes", 2),
-            "decoration:shadow:enabled": ("shadow_enabled", True),
-            "animations:enabled": ("animations_enabled", True),
-            "animations:preset": ("animation_preset", "smooth"),
-            "animations:windows": ("anim_windows", "popin 80%"),
-            "animations:workspaces": ("anim_workspaces", "slide"),
-            "cursor:no_hardware_cursors": ("no_hw_cursors", False),
-            "cursor:inactive_timeout": ("cursor_timeout", 0),
-            "cursor:zoom_factor": ("cursor_zoom", 1.0),
-            "input:repeat_rate": ("repeat_rate", 40),
-            "input:repeat_delay": ("repeat_delay", 250),
-            "input:numlock_by_default": ("numlock", True),
-            "input:sensitivity": ("sensitivity", 0.0),
-            "input:accel_profile": ("accel_profile", "flat"),
-            "input:touchpad:natural_scroll": ("natural_scroll", False),
-            "input:touchpad:clickfinger_behavior": ("clickfinger", True),
-            "input:touchpad:tap-to-click": ("tap_to_click", True),
-            "input:touchpad:disable_while_typing": ("disable_typing", True),
-            "gestures:workspace_swipe": ("workspace_swipe", True),
-            "workspace:count": ("workspace_count", 5),
-            "workspace:layout_toggle": ("workspace_layout", "dwindle"),
-            "dwindle:force_split": ("dwindle_force_split", 0),
-            "dwindle:preserve_split": ("dwindle_preserve_split", True),
-            "dwindle:smart_split": ("dwindle_smart_split", False),
-            "master:new_status": ("master_new_status", "slave"),
-            "rules:pavucontrol_float": ("rules_pavucontrol_float", True),
-            "rules:calculator_float": ("rules_calculator_float", True),
-            "omarchy:theme": ("omarchy_theme_name", self.theme_engine.current_theme),
-            "omarchy:theme_mode": ("omarchy_theme_mode", self.theme_engine.mode),
-            "omarchy:theme_accent": ("omarchy_theme_accent", "#E31B23"),
-            "omarchy:theme_bg": ("omarchy_theme_bg", "#08080B"),
-            "omarchy:theme_fg": ("omarchy_theme_fg", "#d8d8d8"),
-            "omarchy:theme_sel": ("omarchy_theme_sel", "#45475a"),
-            "omarchy:icons": ("omarchy_icons", self.theme_engine.icon_theme),
-        }
+        if key.startswith("bar_widget:"):
+            s_key = key.split(":", 1)[1]
+            return self.settings.get(s_key, "off")
 
-        if key in key_defaults:
-            s_key, def_val = key_defaults[key]
-            return self.settings.get(s_key, def_val)
+        if key == "omarchy:theme":
+            return self.settings.get("omarchy_theme_name", self.theme_engine.current_theme)
+
+        if key == "cursor:size":
+            return str(self.settings.get("cursor_size", 24))
+
+        if key == "input:kb_variant":
+            v = str(self.settings.get("kb_variant", "")).strip()
+            return v if v else "none"
 
         if key == "input:compose_key":
             return "Alt Gr (Compose)" if self.settings.get("compose_key", "ralt") == "ralt" else "Bloq Mayús (Compose)"
 
         if key == "display:scale":
-            return f"{self.monitors[0].get('scale', 1.0)}x" if self.monitors else "1x"
+            sc = float(self.settings.get("monitor_scale", 1.0))
+            return f"{int(sc)}x" if sc.is_integer() else f"{sc}x"
+
         if key == "display:mode":
-            if "monitor_mode" in self.settings:
-                return self.settings["monitor_mode"]
-            if self.monitors:
-                m = self.monitors[0]
-                return f"{m.get('width')}x{m.get('height')}@{m.get('refreshRate', 60):.0f}Hz"
-            return "1920x1080@60Hz"
+            return str(self.settings.get("monitor_mode", "1920x1080@60.00Hz"))
+
+        if key == "display:transform":
+            t = int(self.settings.get("monitor_transform", 0))
+            labels = {0: "0 (Normal)", 1: "1 (90 grados)", 2: "2 (180 grados)", 3: "3 (270 grados)"}
+            return labels.get(t, "0 (Normal)")
+
+        if key == "display:gdk_scale":
+            return str(self.settings.get("monitor_gdk_scale", 1))
+
+        if key == "display:vrr":
+            v = int(self.settings.get("monitor_vrr", 0))
+            labels = {0: "0 (Desactivado)", 1: "1 (Siempre activo)", 2: "2 (Solo pantalla completa)"}
+            return labels.get(v, "0 (Desactivado)")
+
+        if key in self.KEY_TO_SETTING:
+            s_key, _, def_val = self.KEY_TO_SETTING[key]
+            return self.settings.get(s_key, def_val)
 
         return self.settings.get(key, "-")
 
@@ -1233,6 +1751,7 @@ class MecaTUI:
         Cambia a la sección 'target_idx' de la barra lateral izquierda.
         Si existen cambios sin aplicar en la sección actual, abre la ventana modal de confirmación.
         """
+        self.dropdown_open = False
         target_idx = max(0, min(len(self.SECTIONS) - 1, target_idx))
         if target_idx == self.current_section_idx:
             if focus_content:
@@ -1251,12 +1770,26 @@ class MecaTUI:
             if focus_content:
                 self.active_pane = "content"
 
+    def _select_autostart_dropdown_app(self, app_idx: int) -> None:
+        """Selecciona una aplicación de la lista desplegable en el modal de Autostart."""
+        if self.modal_input_kind != "launch":
+            return
+        filtered = self._get_filtered_autostart_apps()
+        if 0 <= app_idx < len(filtered):
+            chosen = filtered[app_idx]
+            self.autostart_app_idx = app_idx
+            self.autostart_selected_app_name = chosen["name"]
+            self.modal_input_text = chosen["cmd"]
+            self.autostart_dropdown_open = False
+            self.modal_selected_idx = 1
+
     def _execute_modal_choice(self, choice_idx: int) -> None:
         """Ejecuta la acción seleccionada dentro de la ventana modal activa."""
         state = self.modal_state
         self.modal_state = None
         self.hover_modal_btn_idx = None
         self.hover_autostart_app_idx = None
+        self.autostart_dropdown_open = False
 
         if state == "confirm_section_change":
             if choice_idx == 0:  # Descartar cambios y cambiar de sección
@@ -1291,16 +1824,15 @@ class MecaTUI:
 
         elif state == "input_autostart":
             if choice_idx == 1:
-                filtered = self._get_filtered_autostart_apps()
-                chosen_cmd = ""
-                chosen_name = ""
-                if filtered and 0 <= self.autostart_app_idx < len(filtered):
-                    chosen_app = filtered[self.autostart_app_idx]
-                    chosen_cmd = chosen_app["cmd"].strip()
-                    chosen_name = chosen_app["name"].strip()
-                else:
-                    chosen_cmd = self.modal_input_text.strip()
-                    chosen_name = chosen_cmd
+                chosen_cmd = self.modal_input_text.strip()
+                chosen_name = self.autostart_selected_app_name or chosen_cmd
+
+                if self.modal_input_kind == "launch" and not chosen_cmd:
+                    filtered = self._get_filtered_autostart_apps()
+                    if filtered and 0 <= self.autostart_app_idx < len(filtered):
+                        chosen_app = filtered[self.autostart_app_idx]
+                        chosen_cmd = chosen_app["cmd"].strip()
+                        chosen_name = chosen_app["name"].strip()
 
                 if chosen_cmd:
                     self.autostart_items.append({
@@ -1319,6 +1851,7 @@ class MecaTUI:
             else:
                 self.status_message = "Agregar a autostart cancelado."
             self.modal_input_text = ""
+            self.autostart_selected_app_name = ""
 
         elif state == "create_theme":
             if choice_idx == 1:
@@ -1367,6 +1900,23 @@ class MecaTUI:
     # MANEJO DE ENTRADA Y RATÓN
     # ==========================
 
+    def _move_content_selection(self, delta: int) -> None:
+        """Mueve la selección vertical en el panel derecho saltando encabezados ('header')."""
+        sec_id = self.SECTIONS[self.current_section_idx][1]
+        items = self.section_items.get(sec_id, [])
+        if not items:
+            return
+        idx = self.selected_item_idx + delta
+        while 0 <= idx < len(items) and items[idx].item_type == "header":
+            idx += (1 if delta >= 0 else -1)
+        if idx < 0:
+            self.selected_item_idx = 0
+        elif idx >= len(items):
+            self.active_pane = "buttons"
+            self.selected_button_idx = 2
+        else:
+            self.selected_item_idx = idx
+
     def handle_input(self, fd: int) -> None:
         r, _, _ = select.select([fd], [], [], 0.05)
         if not r:
@@ -1393,25 +1943,60 @@ class MecaTUI:
         self.hover_subcontrol = None
         self.hover_button_key = None
         self.hover_autostart_app_idx = None
+        self.hover_dropdown_idx = None
 
-        # Si hay una ventana modal interactiva activa (input_autostart, create_theme o input_theme_hex)
+        # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
+        if self.dropdown_open and not self.modal_state:
+            if ch == b"\x1b" and len(ch) == 1:
+                self.dropdown_open = False
+                return
+            if ch == b"\x1b[A":  # Arriba
+                self.dropdown_idx = max(0, self.dropdown_idx - 1)
+                return
+            if ch == b"\x1b[B":  # Abajo
+                self.dropdown_idx = min(len(self.dropdown_options) - 1, self.dropdown_idx + 1)
+                return
+            if ch in (b"\r", b"\n", b" "):
+                if self.dropdown_item and 0 <= self.dropdown_idx < len(self.dropdown_options):
+                    chosen = self.dropdown_options[self.dropdown_idx]
+                    self._set_item_value(self.dropdown_item.key, chosen)
+                    self._apply_hyprctl_live(self.dropdown_item.key, chosen)
+                self.dropdown_open = False
+                return
+            return
+
+        # 2. Si hay una ventana modal interactiva activa (input_autostart, create_theme o input_theme_hex)
         if self.modal_state in ("input_autostart", "create_theme", "input_theme_hex"):
             if ch == b"\x1b" and len(ch) == 1:
+                if self.modal_state == "input_autostart" and self.autostart_dropdown_open:
+                    self.autostart_dropdown_open = False
+                    return
                 self.modal_state = None
                 self.modal_input_text = ""
+                self.autostart_dropdown_open = False
                 return
+
             if self.modal_state == "input_autostart":
-                filtered = self._get_filtered_autostart_apps()
-                if ch == b"\x1b[A":  # Flecha Arriba sube en la lista de aplicaciones
-                    self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
-                    return
-                if ch == b"\x1b[B":  # Flecha Abajo baja en la lista de aplicaciones
-                    if filtered:
-                        self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
-                    return
                 if ch == b"\t":  # Tab alterna el tipo (launch / exec)
                     self._cycle_input_modal_kind()
                     return
+                if self.modal_input_kind == "launch":
+                    filtered = self._get_filtered_autostart_apps()
+                    if ch == b"\x1b[A":  # Flecha Arriba
+                        if self.autostart_dropdown_open:
+                            self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
+                        else:
+                            self.autostart_dropdown_open = True
+                        return
+                    if ch == b"\x1b[B":  # Flecha Abajo abre o navega el selector desplegable
+                        if not self.autostart_dropdown_open:
+                            self.autostart_dropdown_open = True
+                        elif filtered:
+                            self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
+                        return
+                    if ch in (b"\r", b"\n") and self.autostart_dropdown_open:
+                        self._select_autostart_dropdown_app(self.autostart_app_idx)
+                        return
             else:
                 if ch in (b"\x1b[A", b"\x1b[B"):  # Arriba / Abajo cambia plantilla o propiedad
                     self._cycle_input_modal_kind()
@@ -1431,6 +2016,7 @@ class MecaTUI:
                 return
             if ch in (b"\x7f", b"\x08"):  # Backspace
                 self.modal_input_text = self.modal_input_text[:-1]
+                self.autostart_selected_app_name = ""
                 self.autostart_app_idx = 0
                 self.autostart_app_scroll = 0
                 return
@@ -1440,13 +2026,16 @@ class MecaTUI:
                 for c in decoded:
                     if c.isprintable() and c not in ("\r", "\n", "\t"):
                         self.modal_input_text += c
+                        self.autostart_selected_app_name = ""
                         self.autostart_app_idx = 0
                         self.autostart_app_scroll = 0
+                        if self.modal_state == "input_autostart" and self.modal_input_kind == "launch":
+                            self.autostart_dropdown_open = True
             except Exception:
                 pass
             return
 
-        # Si hay una ventana modal de confirmación activa
+        # 3. Si hay una ventana modal de confirmación activa
         if self.modal_state:
             max_idx = 2 if self.modal_state == "confirm_section_change" else 1
             if ch == b"\x1b" and len(ch) == 1:
@@ -1541,23 +2130,17 @@ class MecaTUI:
             elif self.active_pane == "sidebar":
                 self._request_section_change(self.current_section_idx - 1, focus_content=False)
             else:
-                self.selected_item_idx = max(0, self.selected_item_idx - 1)
+                self._move_content_selection(-1)
             return
 
         if ch == b"\x1b[B":  # Flecha Abajo
             if self.active_pane == "sidebar":
                 self._request_section_change(self.current_section_idx + 1, focus_content=False)
             elif self.active_pane == "content":
-                sec_id = self.SECTIONS[self.current_section_idx][1]
-                items_len = len(self.section_items.get(sec_id, []))
-                if self.selected_item_idx >= items_len - 1:
-                    self.active_pane = "buttons"
-                    self.selected_button_idx = 2
-                else:
-                    self.selected_item_idx += 1
+                self._move_content_selection(1)
             return
 
-        # Enter o Espacio para activar/conmutar
+        # Enter o Espacio para activar/conmutar/abrir desplegable
         if ch in (b"\r", b"\n", b" "):
             if self.active_pane == "sidebar":
                 self.active_pane = "content"
@@ -1576,6 +2159,9 @@ class MecaTUI:
         """Alterna el selector de tipo o plantilla en los modales de entrada de texto."""
         if self.modal_state == "input_autostart":
             self.modal_input_kind = "exec" if self.modal_input_kind == "launch" else "launch"
+            if self.modal_input_kind == "exec":
+                self.autostart_dropdown_open = False
+                self.autostart_selected_app_name = ""
         elif self.modal_state == "create_theme":
             themes = self.available_themes if self.available_themes else ["tokyo-night", "catppuccin", "lizarbe"]
             try:
@@ -1597,16 +2183,43 @@ class MecaTUI:
 
     def _handle_mouse_event(self, btn: int, x: int, y: int, act: bytes) -> None:
         """Procesa clics, arrastres, rueda del ratón y movimiento hover (btn == 35)."""
-        cols, rows = shutil.get_terminal_size((90, 26))
-        sidebar_w = 26
+        cols, rows = shutil.get_terminal_size((84, 42))
+        sidebar_w = self._get_sidebar_width(cols)
 
-        # Si hay una ventana modal abierta, dirigir clics, rueda y hover al modal
+        # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
+        if self.dropdown_open and not self.modal_state:
+            dy1, dy2, dx1, dx2 = self._dropdown_box_bounds
+            if act == b"M" and btn == 35:
+                if dy1 <= y <= dy2 and dx1 <= x <= dx2 and y in self._dropdown_row_map:
+                    self.hover_dropdown_idx = self._dropdown_row_map[y]
+                    self.dropdown_idx = self.hover_dropdown_idx
+                else:
+                    self.hover_dropdown_idx = None
+                return
+            if act == b"M" and btn in (64, 65):
+                if btn == 64:
+                    self.dropdown_idx = max(0, self.dropdown_idx - 1)
+                else:
+                    self.dropdown_idx = min(len(self.dropdown_options) - 1, self.dropdown_idx + 1)
+                return
+            if act == b"M" and btn == 0:
+                if dy1 <= y <= dy2 and dx1 <= x <= dx2 and y in self._dropdown_row_map:
+                    opt_idx = self._dropdown_row_map[y]
+                    if self.dropdown_item and 0 <= opt_idx < len(self.dropdown_options):
+                        chosen = self.dropdown_options[opt_idx]
+                        self._set_item_value(self.dropdown_item.key, chosen)
+                        self._apply_hyprctl_live(self.dropdown_item.key, chosen)
+                self.dropdown_open = False
+                return
+            return
+
+        # 2. Si hay una ventana modal abierta, dirigir clics, rueda y hover al modal
         if self.modal_state:
             if act == b"M" and btn == 35:
                 m_ymin, m_ymax = self._modal_button_row_range
                 self.hover_modal_btn_idx = None
                 self.hover_autostart_app_idx = None
-                if self.modal_state == "input_autostart":
+                if self.modal_state == "input_autostart" and self.modal_input_kind == "launch" and self.autostart_dropdown_open:
                     lx_min, lx_max = self._autostart_list_x_range
                     if y in self._autostart_list_click_map and lx_min <= x <= lx_max:
                         self.hover_autostart_app_idx = self._autostart_list_click_map[y]
@@ -1620,12 +2233,13 @@ class MecaTUI:
                 return
 
             if act == b"M" and btn in (64, 65) and self.modal_state == "input_autostart":
-                filtered = self._get_filtered_autostart_apps()
-                if filtered:
-                    if btn == 64:
-                        self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
-                    else:
-                        self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
+                if self.modal_input_kind == "launch" and self.autostart_dropdown_open:
+                    filtered = self._get_filtered_autostart_apps()
+                    if filtered:
+                        if btn == 64:
+                            self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
+                        else:
+                            self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
                 return
 
             if act == b"M" and btn == 0:
@@ -1639,15 +2253,18 @@ class MecaTUI:
                         self.modal_theme_mode = "light" if self.modal_theme_mode == "dark" else "dark"
                         return
                 if self.modal_state == "input_autostart":
-                    lx_min, lx_max = self._autostart_list_x_range
-                    if y in self._autostart_list_click_map and lx_min <= x <= lx_max:
-                        clicked_idx = self._autostart_list_click_map[y]
-                        if self.autostart_app_idx == clicked_idx:
-                            self._execute_modal_choice(1)
-                        else:
-                            self.autostart_app_idx = clicked_idx
-                            self.modal_selected_idx = 1
+                    # Clic sobre el botón del selector desplegable (solo funciona en modo 'launch')
+                    ddy1, ddy2, ddx1, ddx2 = self._autostart_dropdown_btn_range
+                    if self.modal_input_kind == "launch" and ddy1 <= y <= ddy2 and ddx1 <= x <= ddx2:
+                        self.autostart_dropdown_open = not self.autostart_dropdown_open
                         return
+                    # Clic sobre una aplicación dentro de la lista desplegable abierta
+                    if self.modal_input_kind == "launch" and self.autostart_dropdown_open:
+                        lx_min, lx_max = self._autostart_list_x_range
+                        if y in self._autostart_list_click_map and lx_min <= x <= lx_max:
+                            clicked_idx = self._autostart_list_click_map[y]
+                            self._select_autostart_dropdown_app(clicked_idx)
+                            return
                 m_ymin, m_ymax = self._modal_button_row_range
                 if m_ymin <= y <= m_ymax:
                     for b_idx, (bx_min, bx_max) in self._modal_button_click_map.items():
@@ -1711,7 +2328,7 @@ class MecaTUI:
                                 self.hover_subcontrol = "plus"
                             else:
                                 self.hover_subcontrol = None
-                        elif item.item_type in ("toggle", "select", "action"):
+                        elif item.item_type in ("toggle", "select", "action", "theme_card"):
                             c_start, c_end = info["control_range"]
                             self.hover_subcontrol = "control" if (c_start <= x <= c_end) else None
                         elif item.item_type == "slider":
@@ -1730,13 +2347,11 @@ class MecaTUI:
 
             # 1. Clic Izquierdo (btn == 0)
             if btn == 0:
-                # Clic en barra de título superior
                 if y == 1:
-                    if x >= cols - 12:
+                    if x >= cols - 15:
                         self.running = False
                     return
 
-                # Clic en la zona de los 3 botones inferiores (3 filas de alto en el panel derecho)
                 btn_y_min, btn_y_max = self._button_row_range
                 if x > sidebar_w + 1 and btn_y_min <= y <= btn_y_max:
                     reset_r = self._button_click_map.get("reset")
@@ -1759,9 +2374,8 @@ class MecaTUI:
                         self.save_all()
                         return
 
-                # Clic en barra inferior de estado (rows)
                 if y == rows:
-                    if x > cols - 12:
+                    if x > cols - 15:
                         self.running = False
                     elif x <= 16:
                         if self.active_pane == "sidebar":
@@ -1772,14 +2386,12 @@ class MecaTUI:
                             self.active_pane = "sidebar"
                     return
 
-                # Clic en barra lateral izquierda (Sidebar) -> verifica cambios sin aplicar antes de cambiar
                 if x <= sidebar_w:
                     sec_idx = self._sidebar_click_map.get(y)
                     if sec_idx is not None:
                         self._request_section_change(sec_idx, focus_content=True)
                     return
 
-                # Clic en panel de contenido (Content)
                 if x > sidebar_w + 1:
                     info = self._content_click_map.get(y)
                     if info:
@@ -1799,7 +2411,8 @@ class MecaTUI:
                             self._activate_current_item()
 
                         elif item.item_type == "select":
-                            self._adjust_current_item(delta=1)
+                            c_start, _ = info["control_range"]
+                            self._open_dropdown_for_item(item, anchor_y=info.get("row_y", y), anchor_x=c_start)
 
                         elif item.item_type == "slider":
                             s_start, s_end = info["slider_range"]
@@ -1819,6 +2432,9 @@ class MecaTUI:
                             c_start, c_end = info["control_range"]
                             if c_start <= x <= c_end:
                                 self._activate_current_item()
+
+                        elif item.item_type == "theme_card":
+                            self._activate_current_item()
 
             # 2. Arrastre con clic izquierdo sostenido (btn == 32)
             elif btn == 32:
@@ -1848,7 +2464,7 @@ class MecaTUI:
                         self.selected_item_idx = info["item_idx"]
                         self._adjust_current_item(delta=1)
                     else:
-                        self.selected_item_idx = max(0, self.selected_item_idx - 1)
+                        self._move_content_selection(-1)
 
             # 4. Rueda del ratón hacia abajo (Scroll Down: btn == 65)
             elif btn == 65:
@@ -1860,9 +2476,7 @@ class MecaTUI:
                         self.selected_item_idx = info["item_idx"]
                         self._adjust_current_item(delta=-1)
                     else:
-                        sec_id = self.SECTIONS[self.current_section_idx][1]
-                        items_len = len(self.section_items.get(sec_id, []))
-                        self.selected_item_idx = min(items_len - 1, self.selected_item_idx + 1)
+                        self._move_content_selection(1)
 
     def _adjust_current_item(self, delta: int) -> None:
         """Modifica el valor del elemento seleccionado con flechas izquierda/derecha."""
@@ -1899,7 +2513,7 @@ class MecaTUI:
             self._apply_hyprctl_live(item.key, not cur)
 
     def _activate_current_item(self) -> None:
-        """Ejecuta la acción o conmuta el toggle del elemento seleccionado."""
+        """Ejecuta la acción, abre el menú desplegable (en 'select') o conmuta el toggle del elemento seleccionado."""
         sec_id = self.SECTIONS[self.current_section_idx][1]
         items = self.section_items.get(sec_id, [])
         if not items or self.selected_item_idx >= len(items):
@@ -1910,8 +2524,10 @@ class MecaTUI:
         if item.item_type == "toggle":
             self._adjust_current_item(delta=1)
         elif item.item_type == "select":
-            self._adjust_current_item(delta=1)
-        elif item.item_type == "action":
+            # Abrir menú desplegable en la fila correspondiente
+            row_y = 5 + (self.selected_item_idx - self.content_scroll_offset) * 3
+            self._open_dropdown_for_item(item, anchor_y=row_y, anchor_x=45)
+        elif item.item_type in ("action", "theme_card"):
             self._execute_action(item.key)
 
     def _set_item_value(self, key: str, val: Any) -> None:
@@ -1923,83 +2539,47 @@ class MecaTUI:
                 self._sync_autostart_into_settings()
             return
 
-        key_map = {
-            "general:gaps_in": ("gaps_in", int),
-            "general:gaps_out": ("gaps_out", int),
-            "general:border_size": ("border_size", int),
-            "general:resize_on_border": ("resize_on_border", bool),
-            "general:layout": ("layout", str),
-            "general:allow_tearing": ("allow_tearing", bool),
-            "general:snap:enabled": ("snap_enabled", bool),
-            "decoration:rounding": ("rounding", int),
-            "decoration:active_opacity": ("active_opacity", float),
-            "decoration:inactive_opacity": ("inactive_opacity", float),
-            "decoration:dim_inactive": ("dim_inactive", bool),
-            "decoration:dim_strength": ("dim_strength", float),
-            "decoration:blur:enabled": ("blur_enabled", bool),
-            "decoration:blur:size": ("blur_size", int),
-            "decoration:blur:passes": ("blur_passes", int),
-            "decoration:shadow:enabled": ("shadow_enabled", bool),
-            "animations:enabled": ("animations_enabled", bool),
-            "animations:preset": ("animation_preset", str),
-            "animations:windows": ("anim_windows", str),
-            "animations:workspaces": ("anim_workspaces", str),
-            "cursor:no_hardware_cursors": ("no_hw_cursors", bool),
-            "cursor:inactive_timeout": ("cursor_timeout", int),
-            "cursor:zoom_factor": ("cursor_zoom", float),
-            "input:repeat_rate": ("repeat_rate", int),
-            "input:repeat_delay": ("repeat_delay", int),
-            "input:numlock_by_default": ("numlock", bool),
-            "input:sensitivity": ("sensitivity", float),
-            "input:accel_profile": ("accel_profile", str),
-            "input:touchpad:natural_scroll": ("natural_scroll", bool),
-            "input:touchpad:clickfinger_behavior": ("clickfinger", bool),
-            "input:touchpad:tap-to-click": ("tap_to_click", bool),
-            "input:touchpad:disable_while_typing": ("disable_typing", bool),
-            "gestures:workspace_swipe": ("workspace_swipe", bool),
-            "workspace:count": ("workspace_count", int),
-            "workspace:layout_toggle": ("workspace_layout", str),
-            "dwindle:force_split": ("dwindle_force_split", int),
-            "dwindle:preserve_split": ("dwindle_preserve_split", bool),
-            "dwindle:smart_split": ("dwindle_smart_split", bool),
-            "master:new_status": ("master_new_status", str),
-            "rules:pavucontrol_float": ("rules_pavucontrol_float", bool),
-            "rules:calculator_float": ("rules_calculator_float", bool),
-            "omarchy:theme_mode": ("omarchy_theme_mode", str),
-            "omarchy:theme_accent": ("omarchy_theme_accent", str),
-            "omarchy:theme_bg": ("omarchy_theme_bg", str),
-            "omarchy:theme_fg": ("omarchy_theme_fg", str),
-            "omarchy:theme_sel": ("omarchy_theme_sel", str),
-            "omarchy:icons": ("omarchy_icons", str),
-        }
+        if key.startswith("bar_widget:"):
+            s_key = key.split(":", 1)[1]
+            self.settings[s_key] = str(val)
+            self.config_sync.save_bar_settings(self.settings, reload_shell=True)
+            self.status_message = f"✓ Widget actualizado a '{val}' en la barra superior."
+            return
 
-        if key in key_map:
-            s_key, caster = key_map[key]
-            self.settings[s_key] = caster(val)
-            # Previsualizar en vivo el cambio de color en el motor TUI
-            if key == "omarchy:theme_accent":
-                self.theme_engine._colors["accent"] = str(val)
-                self.theme_engine.update_derived_colors()
-            elif key == "omarchy:theme_bg":
-                self.theme_engine._colors["background"] = str(val)
-                self.theme_engine.update_derived_colors()
-            elif key == "omarchy:theme_fg":
-                self.theme_engine._colors["foreground"] = str(val)
-                self.theme_engine._colors["bright_foreground"] = str(val)
-                self.theme_engine.update_derived_colors()
-            elif key == "omarchy:theme_sel":
-                self.theme_engine._colors["selection"] = str(val)
-                self.theme_engine.update_derived_colors()
-        elif key == "input:compose_key":
+        if key == "input:kb_variant":
+            self.settings["kb_variant"] = "" if str(val) == "none" else str(val)
+            return
+
+        if key == "input:compose_key":
             self.settings["compose_key"] = "ralt" if "Alt Gr" in str(val) else "caps"
-        elif key == "display:scale":
+            return
+
+        if key == "display:scale":
+            scale_float = float(str(val).replace("x", ""))
             if self.monitors:
-                scale_float = float(str(val).replace("x", ""))
                 self.monitors[0]["scale"] = scale_float
-                self.settings["monitor_scale"] = scale_float
-        elif key == "display:mode":
+            self.settings["monitor_scale"] = scale_float
+            return
+
+        if key == "display:mode":
             self.settings["monitor_mode"] = str(val)
-        elif key == "omarchy:theme":
+            return
+
+        if key == "display:transform":
+            first_ch = str(val).strip()[0]
+            self.settings["monitor_transform"] = int(first_ch) if first_ch.isdigit() else 0
+            return
+
+        if key == "display:gdk_scale":
+            self.settings["monitor_gdk_scale"] = int(val)
+            return
+
+        if key == "display:vrr":
+            first_ch = str(val).strip()[0]
+            self.settings["monitor_vrr"] = int(first_ch) if first_ch.isdigit() else 0
+            return
+
+        if key == "omarchy:theme":
             self.status_message = f"Aplicando tema {val}..."
             self.render()
             self.theme_engine.set_theme(str(val))
@@ -2015,48 +2595,132 @@ class MecaTUI:
             })
             self.section_items = self._init_section_items()
             self.status_message = f"✓ Tema {val} activado."
+            return
+
+        if key in self.KEY_TO_SETTING:
+            s_key, caster, _ = self.KEY_TO_SETTING[key]
+            self.settings[s_key] = caster(val)
+
+            # Si es una propiedad de la barra superior, aplicar en vivo sobre shell.json
+            if key.startswith("bar:"):
+                self.config_sync.save_bar_settings(self.settings, reload_shell=True)
+                self.status_message = "✓ Configuracion de la barra superior actualizada."
+                return
+
+            # Previsualizar en vivo el cambio de color en el motor TUI
+            if key == "omarchy:theme_accent":
+                self.theme_engine._colors["accent"] = str(val)
+                self.theme_engine.update_derived_colors()
+            elif key == "omarchy:theme_bg":
+                self.theme_engine._colors["background"] = str(val)
+                self.theme_engine.update_derived_colors()
+            elif key == "omarchy:theme_fg":
+                self.theme_engine._colors["foreground"] = str(val)
+                self.theme_engine._colors["bright_foreground"] = str(val)
+                self.theme_engine.update_derived_colors()
+            elif key == "omarchy:theme_sel":
+                self.theme_engine._colors["selection"] = str(val)
+                self.theme_engine.update_derived_colors()
         else:
             self.settings[key] = val
 
     def _apply_hyprctl_live(self, key: str, val: Any) -> None:
         """Aplica la variable en caliente a Hyprland si corresponde."""
-        hypr_map = {
-            "general:gaps_in": "general:gaps_in",
-            "general:gaps_out": "general:gaps_out",
-            "general:border_size": "general:border_size",
-            "general:resize_on_border": "general:resize_on_border",
-            "general:layout": "general:layout",
-            "general:allow_tearing": "general:allow_tearing",
-            "general:snap:enabled": "general:snap:enabled",
-            "decoration:rounding": "decoration:rounding",
-            "decoration:active_opacity": "decoration:active_opacity",
-            "decoration:inactive_opacity": "decoration:inactive_opacity",
-            "decoration:dim_inactive": "decoration:dim_inactive",
-            "decoration:dim_strength": "decoration:dim_strength",
-            "decoration:blur:enabled": "decoration:blur:enabled",
-            "decoration:blur:size": "decoration:blur:size",
-            "decoration:blur:passes": "decoration:blur:passes",
-            "decoration:shadow:enabled": "decoration:shadow:enabled",
-            "animations:enabled": "animations:enabled",
-            "cursor:no_hardware_cursors": "cursor:no_hardware_cursors",
-            "cursor:inactive_timeout": "cursor:inactive_timeout",
-            "cursor:zoom_factor": "cursor:zoom_factor",
-            "input:repeat_rate": "input:repeat_rate",
-            "input:repeat_delay": "input:repeat_delay",
-            "input:numlock_by_default": "input:numlock_by_default",
-            "input:sensitivity": "input:sensitivity",
-            "input:accel_profile": "input:accel_profile",
-            "input:touchpad:natural_scroll": "input:touchpad:natural_scroll",
-            "input:touchpad:clickfinger_behavior": "input:touchpad:clickfinger_behavior",
-            "input:touchpad:tap-to-click": "input:touchpad:tap-to-click",
-            "input:touchpad:disable_while_typing": "input:touchpad:disable_while_typing",
-            "dwindle:force_split": "dwindle:force_split",
-            "dwindle:preserve_split": "dwindle:preserve_split",
-            "dwindle:smart_split": "dwindle:smart_split",
-            "master:new_status": "master:new_status",
+        direct_hypr_keys = {
+            "general:gaps_in",
+            "general:gaps_out",
+            "general:border_size",
+            "general:resize_on_border",
+            "general:extend_border_grab_area",
+            "general:hover_icon_on_border",
+            "general:layout",
+            "general:allow_tearing",
+            "general:no_focus_fallback",
+            "general:snap:enabled",
+            "general:snap:window_gap",
+            "general:snap:monitor_gap",
+            "general:snap:border_overlap",
+            "decoration:rounding",
+            "decoration:rounding_power",
+            "decoration:active_opacity",
+            "decoration:inactive_opacity",
+            "decoration:fullscreen_opacity",
+            "decoration:dim_inactive",
+            "decoration:dim_strength",
+            "decoration:dim_special",
+            "decoration:blur:enabled",
+            "decoration:blur:size",
+            "decoration:blur:passes",
+            "decoration:blur:new_optimizations",
+            "decoration:blur:xray",
+            "decoration:blur:ignore_opacity",
+            "decoration:blur:vibrancy",
+            "decoration:shadow:enabled",
+            "decoration:shadow:range",
+            "decoration:shadow:render_power",
+            "decoration:shadow:sharp",
+            "animations:enabled",
+            "animations:workspace_wraparound",
+            "cursor:no_hardware_cursors",
+            "cursor:inactive_timeout",
+            "cursor:hide_on_key_press",
+            "cursor:hide_on_touch",
+            "cursor:warp_on_change_workspace",
+            "cursor:zoom_factor",
+            "cursor:zoom_rigid",
+            "input:kb_layout",
+            "input:repeat_rate",
+            "input:repeat_delay",
+            "input:numlock_by_default",
+            "input:follow_mouse",
+            "input:mouse_refocus",
+            "input:sensitivity",
+            "input:accel_profile",
+            "input:left_handed",
+            "input:touchpad:natural_scroll",
+            "input:touchpad:scroll_factor",
+            "input:touchpad:clickfinger_behavior",
+            "input:touchpad:tap-to-click",
+            "input:touchpad:disable_while_typing",
+            "input:touchpad:drag_3fg",
+            "dwindle:force_split",
+            "dwindle:preserve_split",
+            "dwindle:smart_split",
+            "dwindle:smart_resizing",
+            "dwindle:default_split_ratio",
+            "master:new_status",
+            "master:mfact",
+            "master:orientation",
+            "scrolling:column_width",
+            "group:groupbar:enabled",
+            "group:groupbar:font_size",
+            "group:groupbar:height",
+            "group:groupbar:gradients",
         }
-        if key in hypr_map:
-            HyprIPC.set_keyword(hypr_map[key], val)
+        mapped_keys = {
+            "binds:hide_special": "binds:hide_special_on_workspace_change",
+            "binds:workspace_back_forth": "binds:workspace_back_and_forth",
+            "binds:allow_cycles": "binds:allow_workspace_cycles",
+            "input:mouse_natural_scroll": "input:natural_scroll",
+            "misc:focus_on_activate": "misc:focus_on_activate",
+            "misc:dpms_key": "misc:key_press_enables_dpms",
+            "misc:dpms_mouse": "misc:mouse_move_enables_dpms",
+            "misc:focus_under_fs": "misc:on_focus_under_fullscreen",
+            "misc:animate_resizes": "misc:animate_manual_resizes",
+            "misc:animate_dragging": "misc:animate_mouse_windowdragging",
+            "dwindle:split_ratio": "dwindle:default_split_ratio",
+            "display:xwayland_zero_scaling": "xwayland:force_zero_scaling",
+        }
+        if key in direct_hypr_keys:
+            HyprIPC.set_keyword(key, val)
+        elif key in mapped_keys:
+            HyprIPC.set_keyword(mapped_keys[key], val)
+        elif key == "input:kb_variant":
+            HyprIPC.set_keyword("input:kb_variant", "" if str(val) == "none" else str(val))
+        elif key == "display:vrr":
+            first_ch = str(val).strip()[0]
+            if first_ch.isdigit():
+                HyprIPC.set_keyword("misc:vrr", int(first_ch))
 
     def _execute_action(self, action_key: str) -> None:
         """Ejecuta acciones especiales como modales de autostart, creación/gestión de temas Omarchy o utilidades."""
@@ -2065,6 +2729,8 @@ class MecaTUI:
             self.modal_state = "input_autostart"
             self.modal_input_text = ""
             self.modal_input_kind = "launch"
+            self.autostart_dropdown_open = False
+            self.autostart_selected_app_name = ""
             self.autostart_app_idx = 0
             self.autostart_app_scroll = 0
             self.modal_selected_idx = 1
@@ -2098,54 +2764,94 @@ class MecaTUI:
             self.modal_selected_idx = 1
             return
 
-        elif action_key == "action:next_wallpaper":
-            try:
-                subprocess.run(["omarchy-theme-bg-next"], capture_output=True, timeout=5)
-                self.status_message = "✓ Fondo de pantalla cambiado al siguiente del tema."
-            except Exception:
-                self.status_message = "No se pudo ejecutar omarchy-theme-bg-next."
+        elif action_key == "action:reset_bar_defaults":
+            if self.config_sync.reset_bar_defaults(self.settings):
+                self.saved_settings = dict(self.settings)
+                self.section_items["bar"] = self._build_bar_section_items()
+                self.status_message = "✓ Barra superior restaurada al diseño predeterminado de Omarchy."
+            else:
+                self.status_message = "Error al restaurar la barra superior."
+            return
 
-        elif action_key == "action:toggle_bar":
+        elif action_key == "action:restart_shell":
             try:
-                subprocess.run(["omarchy-toggle-bar"], capture_output=True, timeout=5)
-                self.status_message = "✓ Barra superior de Omarchy conmutada."
+                subprocess.Popen(
+                    ["omarchy-restart-shell"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.status_message = "✓ Reiniciando shell y barra superior de Omarchy..."
             except Exception:
-                self.status_message = "No se pudo conmutar la barra superior."
-
-        elif action_key == "action:toggle_nightlight":
-            try:
-                subprocess.run(["omarchy-toggle-nightlight"], capture_output=True, timeout=5)
-                self.status_message = "✓ Modo de luz nocturna conmutado."
-            except Exception:
-                self.status_message = "No se pudo conmutar la luz nocturna."
+                self.status_message = "No se encontró 'omarchy-restart-shell'."
+            return
 
         elif action_key == "action:fix_caps":
             use_ralt = (self.settings.get("compose_key", "ralt") == "ralt")
             self.config_sync.fix_caps_lock(use_ralt=use_ralt)
             self.saved_settings["compose_key"] = self.settings.get("compose_key", "ralt")
-            self.status_message = "✓ Tecla Bloq Mayús configurada en input.lua."
+            self.status_message = "✓ Tecla Bloq Mayus configurada y guardada en input.lua."
 
         elif action_key == "action:save_monitor":
-            if self.monitors:
-                m = self.monitors[0]
-                mode_cfg = self.settings.get("monitor_mode", f"{m.get('width')}x{m.get('height')}@{m.get('refreshRate', 60):.0f}Hz")
-                if "@" in mode_cfg:
-                    res_part, hz_part = mode_cfg.split("@", 1)
-                    hz = float(hz_part.lower().replace("hz", "") or 60.0)
-                else:
-                    res_part = f"{m.get('width')}x{m.get('height')}"
-                    hz = float(m.get("refreshRate", 60.0))
-                scale = float(m.get("scale", 1.0))
-                ok = self.config_sync.save_monitor_config(m.get("name"), res_part, hz, scale)
-                if ok:
-                    self.saved_settings["monitor_scale"] = self.settings.get("monitor_scale", scale)
-                    self.saved_settings["monitor_mode"] = self.settings.get("monitor_mode", mode_cfg)
-                    self.status_message = "✓ Configuración de monitor aplicada en monitors.lua."
-                else:
-                    self.status_message = "Error al guardar monitor."
+            m_name = self.monitors[0].get("name", "") if self.monitors else ""
+            mode = str(self.settings.get("monitor_mode", "1920x1080@60.00Hz"))
+            if mode == "preferred":
+                res, hz = "preferred", 60.0
+            else:
+                res = mode.split("@")[0] if "@" in mode else "1920x1080"
+                hz_str = mode.split("@")[1].replace("Hz", "") if "@" in mode else "60"
+                try:
+                    hz = float(hz_str)
+                except ValueError:
+                    hz = 60.0
+            sc = float(self.settings.get("monitor_scale", 1.0))
+            tr = int(self.settings.get("monitor_transform", 0))
+            gdk = int(self.settings.get("monitor_gdk_scale", 1))
+            if self.config_sync.save_monitor_config(m_name, res, hz, sc, transform=tr, gdk_scale=gdk):
+                self.saved_settings["monitor_mode"] = mode
+                self.saved_settings["monitor_scale"] = sc
+                self.saved_settings["monitor_transform"] = tr
+                self.saved_settings["monitor_gdk_scale"] = gdk
+                self.status_message = f"✓ Monitor {m_name} ({mode}, {sc}x) guardado en monitors.lua."
+            else:
+                self.status_message = "Error al guardar monitors.lua."
+
+        elif action_key == "action:next_wallpaper":
+            try:
+                subprocess.Popen(
+                    ["omarchy-theme-bg-next"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.status_message = "✓ Fondo de pantalla de Omarchy cambiado."
+            except Exception:
+                self.status_message = "No se encontró el comando 'omarchy-theme-bg-next'."
+
+        elif action_key == "action:toggle_bar":
+            try:
+                subprocess.Popen(
+                    ["omarchy-toggle-bar"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.settings["bar_visible"] = not bool(self.settings.get("bar_visible", True))
+                self.saved_settings["bar_visible"] = self.settings["bar_visible"]
+                self.status_message = "✓ Visibilidad de la barra superior de Omarchy alternada."
+            except Exception:
+                self.status_message = "No se encontró el comando 'omarchy-toggle-bar'."
+
+        elif action_key == "action:toggle_nightlight":
+            try:
+                subprocess.Popen(
+                    ["omarchy-toggle-nightlight"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.status_message = "✓ Filtro de luz nocturna (hyprsunset) alternado."
+            except Exception:
+                self.status_message = "No se encontró el comando 'omarchy-toggle-nightlight'."
 
         elif action_key == "action:apply_lizarbe_full":
-            self.status_message = "Aplicando Setup Lizarbe..."
+            self.status_message = "Aplicando configuración Lizarbe..."
             self.render()
             LizarbeManager.apply_lizarbe_theme("lizarbe")
             LizarbeManager.ensure_fastfetch_logo()
@@ -2172,15 +2878,13 @@ class MecaTUI:
         return any(self.settings.get(k) != self.saved_settings.get(k) for k in theme_keys)
 
     def save_all(self) -> None:
-        """Aplica y guarda todas las opciones en hyprland-gui.lua, autostart.lua y tema Omarchy."""
+        """Aplica y guarda todas las opciones en hyprland-gui.lua, autostart.lua, shell.json y tema Omarchy."""
         ok_gui = self.config_sync.save_gui_settings(self.settings, apply_live=True)
         ok_auto = self.config_sync.save_autostart_items(self.autostart_items)
 
-        # Si se cambió compose_key, persistir en input.lua
         if self.settings.get("compose_key") != self.saved_settings.get("compose_key"):
             self.config_sync.fix_caps_lock(use_ralt=(self.settings.get("compose_key", "ralt") == "ralt"))
 
-        # Si se editó el tema Omarchy, persistir tanto en el tema activo como en el original
         if self._has_theme_edits():
             self.status_message = "Actualizando tema Omarchy activo y original..."
             self.render()
@@ -2203,7 +2907,7 @@ class MecaTUI:
         if ok_gui and ok_auto:
             self.saved_settings = dict(self.settings)
             self.saved_autostart = [dict(x) for x in self.autostart_items]
-            self.status_message = "✓ Cambios aplicados en Hyprland y Omarchy."
+            self.status_message = "✓ Cambios aplicados en Hyprland, Barra Superior y Omarchy."
         else:
             self.status_message = "Error al aplicar la configuracion."
 
@@ -2223,33 +2927,10 @@ class MecaTUI:
 
     def _perform_reset_to_defaults(self) -> None:
         """Ejecuta el restablecimiento real tras la confirmación del usuario."""
-        defaults = {
-            "gaps_in": 5,
-            "gaps_out": 10,
-            "border_size": 2,
-            "resize_on_border": True,
-            "rounding": 0,
-            "dim_inactive": False,
-            "dim_strength": 0.15,
-            "active_opacity": 1.0,
-            "inactive_opacity": 0.95,
-            "blur_enabled": True,
-            "blur_size": 5,
-            "blur_passes": 2,
-            "shadow_enabled": True,
-            "animations_enabled": True,
-            "animation_preset": "smooth",
-            "no_hw_cursors": False,
-            "cursor_timeout": 0,
-            "cursor_zoom": 1.0,
-            "sensitivity": 0.0,
-            "accel_profile": "flat",
-            "natural_scroll": False,
-            "layout": "dwindle",
-            "compose_key": "ralt",
-            "snap_enabled": False,
-        }
+        defaults = self.config_sync.get_default_settings()
         self.settings.update(defaults)
+        self._sync_theme_into_settings()
+        self._sync_autostart_into_settings()
         self.config_sync.save_gui_settings(self.settings, apply_live=True)
         self.saved_settings = dict(self.settings)
         self.status_message = "✓ Ajustes restablecidos a los valores predeterminados de Omarchy."
