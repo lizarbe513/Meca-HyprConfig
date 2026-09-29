@@ -528,20 +528,19 @@ class ThemeEngine:
         self,
         spec: Dict[str, Any],
         activate: bool = False,
+        apply_now: bool = False,
     ) -> tuple[bool, str]:
         """
-        Crea un nuevo tema Omarchy completo en ~/.config/omarchy/themes/<slug> (y en /usr/share/omarchy/themes)
+        Guarda un tema Omarchy completo en /home/leonardo/.config/omarchy/themes/<slug>
         escribiendo colors.toml, hyprland.lua (bordes activo/inactivo), shell.*.toml (fondo y borde de widgets),
         icons.theme, backgrounds/, preview.png, neovim.lua y keyboard.rgb.
         """
         raw_name = str(spec.get("name", "")).strip()
         slug = re.sub(r"[^a-z0-9\-_]", "", self.normalize_theme_slug(raw_name))
         if not slug:
-            return False, "Nombre de tema invalido. Usa letras, numeros o guiones."
+            return False, "Nombre de tema invalido."
 
         dest_dir = self.user_themes_dir / slug
-        if dest_dir.exists():
-            return False, f"El tema '{slug}' ya existe en ~/.config/omarchy/themes."
 
         base_slug = self.normalize_theme_slug(str(spec.get("base_theme", self.current_theme)))
         base_dir = self._find_theme_dir(base_slug)
@@ -551,10 +550,27 @@ class ThemeEngine:
         try:
             self.user_themes_dir.mkdir(parents=True, exist_ok=True)
             if base_dir and base_dir.exists():
-                shutil.copytree(base_dir, dest_dir, symlinks=False)
+                real_base = base_dir.resolve()
+                if real_base != dest_dir.resolve():
+                    shutil.copytree(real_base, dest_dir, symlinks=False, dirs_exist_ok=True)
+                else:
+                    dest_dir.mkdir(parents=True, exist_ok=True)
             else:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 (dest_dir / "backgrounds").mkdir(exist_ok=True)
+
+            # Asegurar permisos de escritura en el directorio destino
+            for root_p, dirs_p, files_p in os.walk(dest_dir):
+                for d_name in dirs_p:
+                    try:
+                        (Path(root_p) / d_name).chmod(0o755)
+                    except Exception:
+                        pass
+                for f_name in files_p:
+                    try:
+                        (Path(root_p) / f_name).chmod(0o644)
+                    except Exception:
+                        pass
 
             # 1. Fondos de pantalla (backgrounds/)
             bg_dest = dest_dir / "backgrounds"
@@ -563,7 +579,7 @@ class ThemeEngine:
             if wp_source.startswith("tema:"):
                 src_theme = wp_source.split(":", 1)[1]
                 src_t_dir = self._find_theme_dir(src_theme)
-                if src_t_dir and (src_t_dir / "backgrounds").exists() and src_t_dir != base_dir:
+                if src_t_dir and (src_t_dir / "backgrounds").exists() and src_t_dir.resolve() != dest_dir.resolve():
                     for old_f in bg_dest.iterdir():
                         if old_f.is_file():
                             old_f.unlink()
@@ -585,7 +601,6 @@ class ThemeEngine:
             custom_wp = str(spec.get("custom_wallpaper", "ninguno"))
             if custom_wp and custom_wp != "ninguno":
                 if "/" in custom_wp and not custom_wp.startswith("/"):
-                    # Formato "<tema>/backgrounds/<archivo>"
                     parts = custom_wp.split("/", 2)
                     t_src = self._find_theme_dir(parts[0])
                     if t_src and len(parts) == 3:
@@ -602,7 +617,7 @@ class ThemeEngine:
             if prev_source.startswith("tema:"):
                 p_theme = prev_source.split(":", 1)[1]
                 p_dir = self._find_theme_dir(p_theme)
-                if p_dir:
+                if p_dir and p_dir.resolve() != dest_dir.resolve():
                     for p_name in ("preview.png", "preview-unlock.png", "unlock.png"):
                         if (p_dir / p_name).exists():
                             shutil.copy2(p_dir / p_name, dest_dir / p_name)
@@ -692,7 +707,7 @@ hl.config({{
 '''
             (dest_dir / "hyprland.lua").write_text(hyprland_lua_content, encoding="utf-8")
 
-            # 5. Escribir configuración de fondo y bordes de widgets (shell.toml, shell.bar.toml, shell.launcher.toml, shell.menu.toml)
+            # 5. Escribir configuración de fondo y bordes de widgets (shell.bar.toml, shell.launcher.toml, shell.menu.toml)
             w_bg = str(spec.get("widget_bg", bg))
             w_fg = str(spec.get("widget_fg", fg))
             w_border = str(spec.get("widget_border", act_border))
@@ -762,29 +777,11 @@ selected-border-alpha     = 0.25
             if kb_rgb:
                 (dest_dir / "keyboard.rgb").write_text(f"{kb_rgb}\n", encoding="utf-8")
 
-            # 7. Si /usr/share/omarchy/themes existe, sincronizar copia en el directorio del sistema
-            sys_dest = self.system_themes_dir / slug
-            if self.system_themes_dir.exists() and not sys_dest.exists():
-                if os.access(self.system_themes_dir, os.W_OK):
-                    try:
-                        shutil.copytree(dest_dir, sys_dest, symlinks=False)
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        subprocess.run(
-                            ["sudo", "-n", "cp", "-r", str(dest_dir), str(sys_dest)],
-                            capture_output=True,
-                            timeout=3,
-                        )
-                    except Exception:
-                        pass
-
-            if activate:
+            if activate or apply_now:
                 self.set_theme(slug)
-            return True, f"✓ Tema Omarchy '{slug}' creado con todos sus componentes."
+            return True, f"✓ Tema '{slug}' guardado en {dest_dir}"
         except Exception as e:
-            return False, f"Error al crear el tema: {e}"
+            return False, f"Error al guardar el tema: {e}"
 
     def create_theme(
         self,

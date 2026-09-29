@@ -54,30 +54,30 @@ class MecaTUI:
 
     # Secciones organizadas por grupos con iconos solo en la barra izquierda
     SECTIONS = [
-        ("LOOK & FEEL", "general", "", "General", "Gaps, bordes, snap magnético y layout principal"),
-        ("LOOK & FEEL", "decoration", "", "Decoration", "Redondeo, opacidad, desenfoque Kawase y sombras"),
-        ("LOOK & FEEL", "animations", "", "Animations", "Curvas bezier, velocidad y estilo de transiciones"),
-        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Tamaño, cursor por hardware, ocultación y zoom"),
-        ("INPUT", "keybinds", "", "Keybinds", "Distribución de teclado, Bloq Mayús, repetición y atajos"),
-        ("INPUT", "devices", "󰍽", "Devices", "Ratón, foco, touchpad y gestos de 3 dedos"),
-        ("DISPLAY", "monitors", "󰍹", "Monitors", "Escala HiDPI, resolución, rotación, VRR y XWayland"),
-        ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Escritorios persistentes, layout y opciones misc"),
-        ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Opciones detalladas de Dwindle, Master, Scrolling y Groupbar"),
-        ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Reglas de ventanas flotantes, PiP, Steam y opacidad"),
-        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Aplicaciones, servicios o comandos al iniciar sesión"),
-        ("STARTUP & EXTRAS", "bar", "󰍜", "Barra Superior", "Posición, transparencia, reloj y widgets de la barra Omarchy"),
-        ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Crear nuevos temas Omarchy y gestionar los ya creados"),
-        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondos de pantalla, barra superior y luz nocturna de Omarchy"),
+        ("LOOK & FEEL", "general", "", "General", "Espaciado, bordes y layout"),
+        ("LOOK & FEEL", "decoration", "", "Decoration", "Redondeo, opacidad, blur y sombras"),
+        ("LOOK & FEEL", "animations", "", "Animations", "Velocidad y estilo de animaciones"),
+        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Tamaño, ocultacion y zoom"),
+        ("INPUT", "keybinds", "", "Keybinds", "Teclado, repeticion y atajos"),
+        ("INPUT", "devices", "󰍽", "Devices", "Raton, touchpad y gestos"),
+        ("DISPLAY", "monitors", "󰍹", "Monitors", "Escala, resolucion y rotacion"),
+        ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Escritorios y foco"),
+        ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Dwindle, Master, Scrolling y grupos"),
+        ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Ventanas flotantes y opacidad"),
+        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Inicio automatico de sesion"),
+        ("STARTUP & EXTRAS", "bar", "󰍜", "Barra Superior", "Posicion, reloj y widgets"),
+        ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Seleccion y creacion de temas"),
+        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondo, barra y luz nocturna"),
     ]
 
     # Categorías de la ventana dedicada de Creación de Temas Omarchy
     CREATOR_SECTIONS = [
-        ("CREAR TEMA OMARCHY", "creator_identity", "󰏘", "Identidad y Modo", "Nombre del tema, plantilla base, modo claro/oscuro e iconos"),
-        ("CREAR TEMA OMARCHY", "creator_borders", "", "Bordes y Acento", "Color de acento y bordes de ventana enfocada y fuera de enfoque"),
-        ("CREAR TEMA OMARCHY", "creator_widgets", "󰍜", "Fondo de Widgets", "Color de fondo, texto, borde y opacidad de barra, menu y lanzador"),
-        ("CREAR TEMA OMARCHY", "creator_media", "󰸉", "Fondos y Preview", "Fondos de pantalla del tema (backgrounds/) e imagen preview.png"),
-        ("CREAR TEMA OMARCHY", "creator_terminal", "", "Colores Terminal", "Colores de fondo, texto y paleta ANSI 16 en la terminal"),
-        ("CREAR TEMA OMARCHY", "creator_extras", "", "Extras del Tema", "Esquema Neovim, iluminacion RGB de teclado y activacion"),
+        ("CREAR TEMA", "creator_identity", "󰏘", "Identidad", "Nombre, base, modo e iconos"),
+        ("CREAR TEMA", "creator_borders", "", "Bordes y Acento", "Acento y bordes de ventana"),
+        ("CREAR TEMA", "creator_widgets", "󰍜", "Widgets", "Fondo, texto, borde y opacidad"),
+        ("CREAR TEMA", "creator_media", "󰸉", "Fondos y Preview", "Fondos de pantalla y vista previa"),
+        ("CREAR TEMA", "creator_terminal", "", "Terminal", "Fondo, texto y paleta ANSI"),
+        ("CREAR TEMA", "creator_extras", "", "Extras", "Neovim y teclado RGB"),
     ]
 
     # Paleta curada de colores Hex para selección rápida con previsualización
@@ -106,7 +106,7 @@ class MecaTUI:
         self.current_section_idx = 0
         self.selected_item_idx = 0
         self.content_scroll_offset = 0
-        self.status_message = "Listo. Los cambios se aplican al pulsar el boton 'Aplicar'."
+        self.status_message = "Listo."
 
         # Datos cargados del sistema
         self.settings = self.config_sync.load_gui_settings()
@@ -177,7 +177,7 @@ class MecaTUI:
         self._content_click_map: Dict[int, Dict[str, Any]] = {}
         self._button_click_map: Dict[str, Tuple[int, int]] = {}
         self._button_row_range: Tuple[int, int] = (0, 0)
-        self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar/Volver, 2: Aplicar/Crear
+        self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar, 2: Aplicar/Guardar
         self.hover_sidebar_idx: Optional[int] = None
         self.hover_item_idx: Optional[int] = None
         self.hover_subcontrol: Optional[str] = None
@@ -219,54 +219,54 @@ class MecaTUI:
         items = [
             SectionItem(
                 "action:add_autostart",
-                "Agregar aplicacion, servicio o comando",
-                "Abre la ventana con selector desplegable de apps o entrada de comando",
+                "Agregar entrada",
+                "Aplicacion, servicio o comando",
                 "action",
             ),
         ]
         for idx, entry in enumerate(self.autostart_items):
             cmd = entry.get("cmd", "")
             kind = entry.get("kind", "launch")
-            kind_lbl = "App / Servicio (o.launch_on_start)" if kind == "launch" else "Comando (o.exec_on_start)"
+            kind_lbl = "Aplicacion" if kind == "launch" else "Comando"
             items.append(
                 SectionItem(
                     f"autostart:item:{idx}",
                     cmd,
-                    f"{kind_lbl} — Supr/Del para eliminar",
+                    f"{kind_lbl} │ Supr: Eliminar",
                     "toggle",
                 )
             )
         return items
 
     def _build_bar_section_items(self) -> List[SectionItem]:
-        """Construye los controles de la pestaña Barra Superior de Omarchy (~/.config/omarchy/shell.json)."""
+        """Construye los controles de la pestaña Barra Superior de Omarchy."""
         items = [
-            SectionItem("bar:visible", "Mostrar barra superior", "Muestra u oculta la barra superior de Omarchy", "toggle"),
-            SectionItem("bar:position", "Posicion de la barra", "Borde de la pantalla donde se ubica la barra", "select", options=["top", "bottom", "left", "right"]),
-            SectionItem("bar:transparent", "Fondo transparente", "Hace transparente la superficie de la barra superior", "toggle"),
-            SectionItem("bar:center_anchor", "Widget ancla central", "Widget que permanece centrado en la barra", "select", options=["omarchy.clock", "omarchy.workspaces", "none"]),
+            SectionItem("bar:visible", "Mostrar barra", "Visible en pantalla", "toggle"),
+            SectionItem("bar:position", "Posicion", "Ubicacion en pantalla", "select", options=["top", "bottom", "left", "right"]),
+            SectionItem("bar:transparent", "Fondo transparente", "Superficie sin fondo solido", "toggle"),
+            SectionItem("bar:center_anchor", "Ancla central", "Widget fijo al centro", "select", options=["omarchy.clock", "omarchy.workspaces", "none"]),
             SectionItem(
                 "bar:clock_format",
                 "Formato del reloj",
-                "Formato principal de fecha y hora en la barra",
+                "Formato de fecha y hora",
                 "select",
                 options=["ddd d MMM h:mm AP", "ddd d MMM HH:mm", "HH:mm", "h:mm AP", "HH:mm:ss"],
             ),
             SectionItem(
                 "bar:clock_alt_format",
-                "Formato alternativo del reloj",
-                "Formato secundario mostrado al hacer clic sobre el reloj",
+                "Formato secundario",
+                "Al hacer clic en el reloj",
                 "select",
                 options=["d MMMM 'W'ww yyyy", "dddd, d MMMM yyyy", "yyyy-MM-dd"],
             ),
-            SectionItem("bar:idle_screensaver", "Salvapantallas por inactividad (s)", "Segundos antes de activar el salvapantallas (0 = desactivado)", "stepper", 0, 1800, 30),
-            SectionItem("bar:idle_lock", "Bloqueo de sesion por inactividad (s)", "Segundos antes de bloquear la sesion (0 = desactivado)", "stepper", 0, 3600, 60),
-            SectionItem("action:reset_bar_defaults", "Restaurar barra por defecto", "Ejecuta 'omarchy-bar defaults' para recuperar el diseño original", "action"),
-            SectionItem("action:restart_shell", "Reiniciar barra y shell Omarchy", "Recarga el shell grafico de Omarchy completamente", "action"),
+            SectionItem("bar:idle_screensaver", "Salvapantallas (s)", "Tiempo de inactividad", "stepper", 0, 1800, 30),
+            SectionItem("bar:idle_lock", "Bloqueo (s)", "Tiempo para bloquear sesion", "stepper", 0, 3600, 60),
+            SectionItem("action:reset_bar_defaults", "Restaurar barra", "Diseño original", "action"),
+            SectionItem("action:restart_shell", "Reiniciar barra", "Recargar shell", "action"),
             SectionItem(
                 "header:bar_widgets",
-                "WIDGETS DE LA BARRA SUPERIOR",
-                "Elige en que seccion mostrar cada widget mediante menu desplegable (off / left / center / right)",
+                "WIDGETS",
+                "Posicion en la barra",
                 "header",
             ),
         ]
@@ -275,7 +275,7 @@ class MecaTUI:
                 SectionItem(
                     f"bar_widget:{s_key}",
                     w_label,
-                    f"Ubicacion del widget '{w_id}' en la barra (off = oculto)",
+                    w_id,
                     "select",
                     options=["off", "left", "center", "right"],
                 )
@@ -302,28 +302,27 @@ class MecaTUI:
                 "Yaru-magenta", "Papirus-Dark", "Papirus-Light", "Adwaita", "Lizarbe-Red",
             ]))
             return [
-                SectionItem("creator:name", "Nombre del nuevo tema", "Haz clic o pulsa Enter para escribir el identificador del tema", "action"),
-                SectionItem("creator:base_theme", "Plantilla base del sistema", "Carga estructura, fondos y paleta inicial desde este tema", "select", options=themes),
-                SectionItem("creator:mode", "Modo del tema (Claro / Oscuro)", "Define 'mode' en colors.toml para aplicaciones GTK y shell", "select", options=["dark", "light"]),
-                SectionItem("creator:icons", "Tema de iconos (icons.theme)", "Paquete de iconos GTK asociado al tema Omarchy", "select", options=icon_opts),
-                SectionItem("creator:activate_on_create", "Activar tema al crearlo", "Aplica inmediatamente el nuevo tema tras pulsar 'Crear Tema'", "toggle"),
+                SectionItem("creator:name", "Nombre", "Identificador del tema", "action"),
+                SectionItem("creator:base_theme", "Plantilla base", "Tema de referencia", "select", options=themes),
+                SectionItem("creator:mode", "Modo", "Oscuro o claro", "select", options=["dark", "light"]),
+                SectionItem("creator:icons", "Iconos", "Paquete de iconos", "select", options=icon_opts),
             ]
 
         if sec_id == "creator_borders":
             return [
-                SectionItem("creator:accent", "Color de acento (accent)", "Color principal de resaltado en Omarchy y shell", "select", options=self._color_options_for(spec.get("accent", "#7aa2f7"))),
-                SectionItem("creator:active_border", "Borde de ventana enfocada", "Color general.col.active_border en hyprland.lua y colors.toml", "select", options=self._color_options_for(spec.get("active_border", "#7aa2f7"))),
-                SectionItem("creator:inactive_border", "Borde de ventana fuera de enfoque", "Color general.col.inactive_border en hyprland.lua y colors.toml", "select", options=self._color_options_for(spec.get("inactive_border", "#414868"))),
-                SectionItem("creator:selection", "Color de seleccion (selection)", "Color de bloques seleccionados en menús y terminal", "select", options=self._color_options_for(spec.get("selection", "#292e42"))),
-                SectionItem("creator:muted", "Color secundario / apagado (muted)", "Tono para bordes secundarios, separadores y texto tenue", "select", options=self._color_options_for(spec.get("muted", "#414868"))),
+                SectionItem("creator:accent", "Acento", "Color principal", "select", options=self._color_options_for(spec.get("accent", "#7aa2f7"))),
+                SectionItem("creator:active_border", "Borde activo", "Ventana enfocada", "select", options=self._color_options_for(spec.get("active_border", "#7aa2f7"))),
+                SectionItem("creator:inactive_border", "Borde inactivo", "Ventana sin foco", "select", options=self._color_options_for(spec.get("inactive_border", "#414868"))),
+                SectionItem("creator:selection", "Seleccion", "Resaltado en menus", "select", options=self._color_options_for(spec.get("selection", "#292e42"))),
+                SectionItem("creator:muted", "Secundario", "Bordes y texto tenue", "select", options=self._color_options_for(spec.get("muted", "#414868"))),
             ]
 
         if sec_id == "creator_widgets":
             return [
-                SectionItem("creator:widget_bg", "Color de fondo de los widgets", "Superficie de barra superior, lanzador y menús (shell.*.toml)", "select", options=self._color_options_for(spec.get("widget_bg", "#1a1b26"))),
-                SectionItem("creator:widget_fg", "Color de texto de los widgets", "Color de fuente en barra superior, notificaciones y menús", "select", options=self._color_options_for(spec.get("widget_fg", "#a9b1d6"))),
-                SectionItem("creator:widget_border", "Color de borde de los widgets", "Borde de tarjetas del lanzador, menús y OSD", "select", options=self._color_options_for(spec.get("widget_border", "#7aa2f7"))),
-                SectionItem("creator:widget_alpha", "Opacidad de fondo de widgets", "Transparencia background-alpha en shell.bar.toml y launcher", "slider", 0.10, 1.00, 0.05),
+                SectionItem("creator:widget_bg", "Fondo de widgets", "Barra, lanzador y menus", "select", options=self._color_options_for(spec.get("widget_bg", "#1a1b26"))),
+                SectionItem("creator:widget_fg", "Texto de widgets", "Fuente en barra y menus", "select", options=self._color_options_for(spec.get("widget_fg", "#a9b1d6"))),
+                SectionItem("creator:widget_border", "Borde de widgets", "Contorno de menus y OSD", "select", options=self._color_options_for(spec.get("widget_border", "#7aa2f7"))),
+                SectionItem("creator:widget_alpha", "Opacidad", "Transparencia de widgets", "slider", 0.10, 1.00, 0.05),
             ]
 
         if sec_id == "creator_media":
@@ -345,31 +344,31 @@ class MecaTUI:
                 prev_opts.insert(0, cur_prev)
 
             return [
-                SectionItem("creator:wallpapers_source", "Coleccion de fondos (backgrounds/)", "Origen de los fondos de pantalla incluidos en el tema", "select", options=wp_sources),
-                SectionItem("creator:custom_wallpaper", "Fondo de pantalla adicional", "Agrega una imagen específica como fondo principal del tema", "select", options=custom_wps),
-                SectionItem("creator:preview_source", "Preview del tema (preview.png)", "Imagen de vista previa para el selector de temas y bloqueo", "select", options=prev_opts),
+                SectionItem("creator:wallpapers_source", "Fondos", "Carpeta de fondos", "select", options=wp_sources),
+                SectionItem("creator:custom_wallpaper", "Fondo extra", "Imagen adicional", "select", options=custom_wps),
+                SectionItem("creator:preview_source", "Preview", "Imagen de vista previa", "select", options=prev_opts),
             ]
 
         if sec_id == "creator_terminal":
             return [
-                SectionItem("creator:background", "Fondo de la terminal (background)", "Color principal de fondo en Alacritty/Kitty/Foot", "select", options=self._color_options_for(spec.get("background", "#1a1b26"))),
-                SectionItem("creator:dark_background", "Fondo oscuro secundario", "Color dark_background en colors.toml", "select", options=self._color_options_for(spec.get("dark_background", "#13141c"))),
-                SectionItem("creator:lighter_background", "Fondo elevado (lighter_background)", "Superficie para paneles y barras de estado en terminal", "select", options=self._color_options_for(spec.get("lighter_background", "#24283b"))),
-                SectionItem("creator:foreground", "Texto de la terminal (foreground)", "Color principal del texto en la terminal", "select", options=self._color_options_for(spec.get("foreground", "#a9b1d6"))),
-                SectionItem("creator:bright_foreground", "Texto brillante (bright_foreground)", "Color de texto resaltado y en negrita", "select", options=self._color_options_for(spec.get("bright_foreground", "#c0caf5"))),
-                SectionItem("creator:red", "Terminal Rojo (red)", "Color ANSI rojo normal", "select", options=self._color_options_for(spec.get("red", "#f7768e"))),
-                SectionItem("creator:green", "Terminal Verde (green)", "Color ANSI verde normal", "select", options=self._color_options_for(spec.get("green", "#9ece6a"))),
-                SectionItem("creator:yellow", "Terminal Amarillo (yellow)", "Color ANSI amarillo normal", "select", options=self._color_options_for(spec.get("yellow", "#e0af68"))),
-                SectionItem("creator:blue", "Terminal Azul (blue)", "Color ANSI azul normal", "select", options=self._color_options_for(spec.get("blue", "#7aa2f7"))),
-                SectionItem("creator:magenta", "Terminal Magenta (magenta)", "Color ANSI magenta normal", "select", options=self._color_options_for(spec.get("magenta", "#ad8ee6"))),
-                SectionItem("creator:cyan", "Terminal Cian (cyan)", "Color ANSI cian normal", "select", options=self._color_options_for(spec.get("cyan", "#449dab"))),
-                SectionItem("creator:orange", "Terminal Naranja (orange)", "Color complementario naranja", "select", options=self._color_options_for(spec.get("orange", "#eb927b"))),
-                SectionItem("creator:bright_red", "Terminal Rojo Brillante", "Color ANSI bright_red", "select", options=self._color_options_for(spec.get("bright_red", "#ff7a93"))),
-                SectionItem("creator:bright_green", "Terminal Verde Brillante", "Color ANSI bright_green", "select", options=self._color_options_for(spec.get("bright_green", "#b9f27c"))),
-                SectionItem("creator:bright_yellow", "Terminal Amarillo Brillante", "Color ANSI bright_yellow", "select", options=self._color_options_for(spec.get("bright_yellow", "#ff9e64"))),
-                SectionItem("creator:bright_blue", "Terminal Azul Brillante", "Color ANSI bright_blue", "select", options=self._color_options_for(spec.get("bright_blue", "#7da6ff"))),
-                SectionItem("creator:bright_magenta", "Terminal Magenta Brillante", "Color ANSI bright_magenta", "select", options=self._color_options_for(spec.get("bright_magenta", "#bb9af7"))),
-                SectionItem("creator:bright_cyan", "Terminal Cian Brillante", "Color ANSI bright_cyan", "select", options=self._color_options_for(spec.get("bright_cyan", "#0db9d7"))),
+                SectionItem("creator:background", "Fondo", "Fondo principal", "select", options=self._color_options_for(spec.get("background", "#1a1b26"))),
+                SectionItem("creator:dark_background", "Fondo oscuro", "Tono secundario", "select", options=self._color_options_for(spec.get("dark_background", "#13141c"))),
+                SectionItem("creator:lighter_background", "Fondo elevado", "Paneles en terminal", "select", options=self._color_options_for(spec.get("lighter_background", "#24283b"))),
+                SectionItem("creator:foreground", "Texto", "Texto principal", "select", options=self._color_options_for(spec.get("foreground", "#a9b1d6"))),
+                SectionItem("creator:bright_foreground", "Texto brillante", "Texto resaltado", "select", options=self._color_options_for(spec.get("bright_foreground", "#c0caf5"))),
+                SectionItem("creator:red", "Rojo", "ANSI red", "select", options=self._color_options_for(spec.get("red", "#f7768e"))),
+                SectionItem("creator:green", "Verde", "ANSI green", "select", options=self._color_options_for(spec.get("green", "#9ece6a"))),
+                SectionItem("creator:yellow", "Amarillo", "ANSI yellow", "select", options=self._color_options_for(spec.get("yellow", "#e0af68"))),
+                SectionItem("creator:blue", "Azul", "ANSI blue", "select", options=self._color_options_for(spec.get("blue", "#7aa2f7"))),
+                SectionItem("creator:magenta", "Magenta", "ANSI magenta", "select", options=self._color_options_for(spec.get("magenta", "#ad8ee6"))),
+                SectionItem("creator:cyan", "Cian", "ANSI cyan", "select", options=self._color_options_for(spec.get("cyan", "#449dab"))),
+                SectionItem("creator:orange", "Naranja", "ANSI orange", "select", options=self._color_options_for(spec.get("orange", "#eb927b"))),
+                SectionItem("creator:bright_red", "Rojo brillante", "ANSI bright red", "select", options=self._color_options_for(spec.get("bright_red", "#ff7a93"))),
+                SectionItem("creator:bright_green", "Verde brillante", "ANSI bright green", "select", options=self._color_options_for(spec.get("bright_green", "#b9f27c"))),
+                SectionItem("creator:bright_yellow", "Amarillo brillante", "ANSI bright yellow", "select", options=self._color_options_for(spec.get("bright_yellow", "#ff9e64"))),
+                SectionItem("creator:bright_blue", "Azul brillante", "ANSI bright blue", "select", options=self._color_options_for(spec.get("bright_blue", "#7da6ff"))),
+                SectionItem("creator:bright_magenta", "Magenta brillante", "ANSI bright magenta", "select", options=self._color_options_for(spec.get("bright_magenta", "#bb9af7"))),
+                SectionItem("creator:bright_cyan", "Cian brillante", "ANSI bright cyan", "select", options=self._color_options_for(spec.get("bright_cyan", "#0db9d7"))),
             ]
 
         # creator_extras
@@ -379,8 +378,8 @@ class MecaTUI:
         ]))
         kb_hex = "#" + str(spec.get("keyboard_rgb", "7aa2f7")).lstrip("#")[:6]
         return [
-            SectionItem("creator:neovim_scheme", "Colorscheme de Neovim (neovim.lua)", "Esquema de colores configurado para LazyVim / Neovim", "select", options=nv_opts),
-            SectionItem("creator:keyboard_rgb", "Iluminacion RGB Teclado (keyboard.rgb)", "Color hexadecimal para teclados con soporte RGB en Omarchy", "select", options=self._color_options_for(kb_hex)),
+            SectionItem("creator:neovim_scheme", "Neovim", "Esquema de color", "select", options=nv_opts),
+            SectionItem("creator:keyboard_rgb", "Teclado RGB", "Color de iluminacion", "select", options=self._color_options_for(kb_hex)),
         ]
 
     def _build_themes_section_items(self) -> List[SectionItem]:
@@ -391,21 +390,21 @@ class MecaTUI:
         items = [
             SectionItem(
                 "action:create_theme",
-                "Crear nuevo tema Omarchy",
-                "Abre la ventana de creacion de temas para configurar bordes, widgets, fondos y terminal",
+                "Crear tema",
+                "Nuevo tema personalizado",
                 "action",
             ),
             SectionItem(
                 "action:clone_theme",
-                "Duplicar tema actual como nuevo",
-                f"Abre la ventana de creacion tomando '{self.theme_engine.current_theme}' como base",
+                "Duplicar tema",
+                f"Basado en '{self.theme_engine.current_theme}'",
                 "action",
             ),
-            SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Selecciona un tema de la lista (pulsa Aplicar para activarlo)", "select", options=themes),
+            SectionItem("omarchy:theme", "Tema", "Tema del sistema", "select", options=themes),
             SectionItem(
                 "header:saved_themes",
-                "TEMAS GUARDADOS EN EL SISTEMA",
-                "Selecciona un tema para resaltarlo y pulsa 'Aplicar' para activarlo (Supr: Eliminar)",
+                "TEMAS GUARDADOS",
+                "Supr: Eliminar",
                 "header",
             ),
         ]
@@ -413,13 +412,12 @@ class MecaTUI:
         user_themes = self.theme_engine.list_user_themes()
         for u_name in user_themes:
             info = self.theme_engine.get_theme_info(u_name)
-            t_mode = info.get("mode", "dark")
             t_icons = info.get("icon_theme", "Adwaita")
             items.append(
                 SectionItem(
                     f"user_theme:item:{u_name}",
                     u_name,
-                    f"Modo: {t_mode} │ Iconos: {t_icons} │ Supr/Del: Eliminar",
+                    t_icons,
                     "theme_card",
                 )
             )
@@ -447,145 +445,145 @@ class MecaTUI:
 
         return {
             "general": [
-                SectionItem("general:gaps_in", "Inner gaps (gaps_in)", "Separación entre ventanas en píxeles", "stepper", 0, 30, 1),
-                SectionItem("general:gaps_out", "Outer gaps (gaps_out)", "Separación respecto a los bordes de la pantalla", "stepper", 0, 50, 1),
-                SectionItem("general:border_size", "Border size", "Grosor de la línea del borde de ventanas en píxeles", "stepper", 0, 10, 1),
-                SectionItem("general:resize_on_border", "Resize on border", "Permite redimensionar arrastrando los bordes con el ratón", "toggle"),
-                SectionItem("general:extend_border_grab_area", "Extend border grab area", "Píxeles extra alrededor del borde para facilitar el agarre", "stepper", 0, 30, 1),
-                SectionItem("general:hover_icon_on_border", "Hover icon on border", "Muestra el icono de redimensionado al pasar el cursor por el borde", "toggle"),
-                SectionItem("general:layout", "Layout principal", "Algoritmo de mosaico global (dwindle / master / scrolling)", "select", options=["dwindle", "master", "scrolling"]),
-                SectionItem("general:allow_tearing", "Allow tearing", "Permite screen tearing para menor latencia en juegos", "toggle"),
-                SectionItem("general:no_focus_fallback", "No focus fallback", "No salta el foco a otra ventana cuando no hay ventana en esa dirección", "toggle"),
-                SectionItem("general:snap:enabled", "Enable floating snap", "Ajuste magnético automático para ventanas flotantes", "toggle"),
-                SectionItem("general:snap:window_gap", "Snap window gap", "Distancia en píxeles para acoplar ventanas flotantes entre sí", "stepper", 0, 40, 2),
-                SectionItem("general:snap:monitor_gap", "Snap monitor gap", "Distancia en píxeles para acoplar ventanas a los bordes del monitor", "stepper", 0, 40, 2),
-                SectionItem("general:snap:border_overlap", "Snap border overlap", "Superpone un borde al acoplar dos ventanas flotantes", "toggle"),
+                SectionItem("general:gaps_in", "Gaps internos", "Espacio entre ventanas", "stepper", 0, 30, 1),
+                SectionItem("general:gaps_out", "Gaps externos", "Margen de pantalla", "stepper", 0, 50, 1),
+                SectionItem("general:border_size", "Grosor de borde", "Tamaño en pixeles", "stepper", 0, 10, 1),
+                SectionItem("general:resize_on_border", "Redimensionar en borde", "Arrastrar bordes con el raton", "toggle"),
+                SectionItem("general:extend_border_grab_area", "Area de agarre", "Pixeles extra en bordes", "stepper", 0, 30, 1),
+                SectionItem("general:hover_icon_on_border", "Icono en borde", "Mostrar cursor al pasar", "toggle"),
+                SectionItem("general:layout", "Layout", "Disposicion de ventanas", "select", options=["dwindle", "master", "scrolling"]),
+                SectionItem("general:allow_tearing", "Allow tearing", "Menor latencia en juegos", "toggle"),
+                SectionItem("general:no_focus_fallback", "Sin salto de foco", "Mantener foco en borde", "toggle"),
+                SectionItem("general:snap:enabled", "Ajuste magnetico", "Acoplar ventanas flotantes", "toggle"),
+                SectionItem("general:snap:window_gap", "Distancia entre ventanas", "Rango de acoplamiento", "stepper", 0, 40, 2),
+                SectionItem("general:snap:monitor_gap", "Distancia al monitor", "Rango a bordes de pantalla", "stepper", 0, 40, 2),
+                SectionItem("general:snap:border_overlap", "Superponer bordes", "Unir bordes al acoplar", "toggle"),
             ],
             "decoration": [
-                SectionItem("decoration:rounding", "Rounding", "Radio de esquinas redondeadas en píxeles (0 = recto)", "stepper", 0, 30, 1),
-                SectionItem("decoration:rounding_power", "Rounding power (Squircle)", "Curvatura de esquina superelíptica (2.0 = círculo, 4.0 = squircle)", "slider", 1.0, 5.0, 0.25),
-                SectionItem("decoration:active_opacity", "Active opacity", "Opacidad de la ventana enfocada (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
-                SectionItem("decoration:inactive_opacity", "Inactive opacity", "Opacidad de ventanas inactivas (1.0 = opaco)", "slider", 0.1, 1.0, 0.05),
-                SectionItem("decoration:fullscreen_opacity", "Fullscreen opacity", "Opacidad de ventanas en pantalla completa", "slider", 0.1, 1.0, 0.05),
-                SectionItem("decoration:dim_inactive", "Dim inactive", "Oscurece suavemente las ventanas no enfocadas", "toggle"),
-                SectionItem("decoration:dim_strength", "Dim strength", "Intensidad del oscurecimiento en ventanas inactivas", "slider", 0.0, 1.0, 0.05),
-                SectionItem("decoration:dim_special", "Dim special workspace", "Oscurecimiento del fondo al abrir un workspace especial", "slider", 0.0, 1.0, 0.05),
-                SectionItem("decoration:blur:enabled", "Blur enabled", "Desenfoque de fondo tipo Kawase para ventanas translúcidas", "toggle"),
-                SectionItem("decoration:blur:size", "Blur size", "Radio del algoritmo de desenfoque (mayor = más difuso)", "stepper", 1, 20, 1),
-                SectionItem("decoration:blur:passes", "Blur passes", "Número de pasadas de filtrado Kawase", "stepper", 1, 6, 1),
-                SectionItem("decoration:blur:new_optimizations", "Blur optimizations", "Activa optimizaciones de rendimiento para el desenfoque", "toggle"),
-                SectionItem("decoration:blur:xray", "Blur X-Ray", "Las ventanas flotantes desenfocan directamente el fondo de pantalla", "toggle"),
-                SectionItem("decoration:blur:ignore_opacity", "Blur ignore opacity", "Calcula el desenfoque ignorando la opacidad de la ventana", "toggle"),
-                SectionItem("decoration:blur:vibrancy", "Blur vibrancy", "Saturación de colores en áreas desenfocadas", "slider", 0.0, 1.0, 0.05),
-                SectionItem("decoration:shadow:enabled", "Drop shadows", "Habilita sombras proyectadas bajo las ventanas", "toggle"),
-                SectionItem("decoration:shadow:range", "Shadow range", "Tamaño del radio de la sombra en píxeles", "stepper", 1, 40, 1),
-                SectionItem("decoration:shadow:render_power", "Shadow render power", "Caída de degradado de la sombra (1 = suave, 4 = intensa)", "stepper", 1, 4, 1),
-                SectionItem("decoration:shadow:sharp", "Sharp shadows", "Dibuja sombras nítidas sin difuminado", "toggle"),
+                SectionItem("decoration:rounding", "Redondeo", "Esquinas en pixeles", "stepper", 0, 30, 1),
+                SectionItem("decoration:rounding_power", "Curvatura", "Suavidad de esquinas", "slider", 1.0, 5.0, 0.25),
+                SectionItem("decoration:active_opacity", "Opacidad activa", "Ventana enfocada", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:inactive_opacity", "Opacidad inactiva", "Ventanas sin foco", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:fullscreen_opacity", "Opacidad fullscreen", "Pantalla completa", "slider", 0.1, 1.0, 0.05),
+                SectionItem("decoration:dim_inactive", "Atenuar inactivas", "Oscurecer ventanas sin foco", "toggle"),
+                SectionItem("decoration:dim_strength", "Nivel de atenuado", "Intensidad en inactivas", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:dim_special", "Atenuar especial", "Fondo de scratchpad", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:blur:enabled", "Desenfoque (Blur)", "Fondo translucido", "toggle"),
+                SectionItem("decoration:blur:size", "Radio de blur", "Tamaño del desenfoque", "stepper", 1, 20, 1),
+                SectionItem("decoration:blur:passes", "Pasadas de blur", "Calidad del filtrado", "stepper", 1, 6, 1),
+                SectionItem("decoration:blur:new_optimizations", "Optimizar blur", "Mejor rendimiento", "toggle"),
+                SectionItem("decoration:blur:xray", "Blur X-Ray", "Ver fondo a traves de flotantes", "toggle"),
+                SectionItem("decoration:blur:ignore_opacity", "Ignorar opacidad", "Blur independiente", "toggle"),
+                SectionItem("decoration:blur:vibrancy", "Vibrancia", "Saturacion del blur", "slider", 0.0, 1.0, 0.05),
+                SectionItem("decoration:shadow:enabled", "Sombras", "Sombra bajo ventanas", "toggle"),
+                SectionItem("decoration:shadow:range", "Tamaño de sombra", "Radio en pixeles", "stepper", 1, 40, 1),
+                SectionItem("decoration:shadow:render_power", "Intensidad de sombra", "Degradado (1-4)", "stepper", 1, 4, 1),
+                SectionItem("decoration:shadow:sharp", "Sombra nitida", "Sin difuminado", "toggle"),
             ],
             "animations": [
-                SectionItem("animations:enabled", "Enable animations", "Habilita las transiciones y animaciones globales de Hyprland", "toggle"),
-                SectionItem("animations:workspace_wraparound", "Workspace wraparound", "Anima el salto del último escritorio al primero como continuo", "toggle"),
-                SectionItem("animations:preset", "Animation preset", "Perfil global de velocidad de curvas (omarchy / smooth / snappy / minimal)", "select", options=["omarchy", "smooth", "snappy", "minimal"]),
-                SectionItem("animations:windows", "Windows style", "Estilo al abrir y cerrar ventanas (hl.animation windowsIn/Out)", "select", options=["popin 87%", "popin 80%", "slide", "gnomed"]),
-                SectionItem("animations:windows_speed", "Windows speed", "Velocidad base de la animación de ventanas", "slider", 1.0, 10.0, 0.5),
-                SectionItem("animations:fade_enabled", "Enable fade", "Habilita efectos de desvanecimiento (fade) en ventanas y capas", "toggle"),
-                SectionItem("animations:layers", "Layers style", "Estilo de animación para paneles y menús superpuestos", "select", options=["fade", "slide", "popin 80%"]),
-                SectionItem("animations:workspaces_enabled", "Animate workspaces", "Activa la animación al cambiar de espacio de trabajo", "toggle"),
-                SectionItem("animations:workspaces", "Workspaces style", "Estilo de transición entre escritorios", "select", options=["slide", "slidevert", "fade", "slidefade 20%"]),
-                SectionItem("animations:special", "Special workspace style", "Estilo de transición del escritorio especial (scratchpad)", "select", options=["slidevert", "slide", "fade"]),
+                SectionItem("animations:enabled", "Animaciones", "Transiciones globales", "toggle"),
+                SectionItem("animations:workspace_wraparound", "Salto continuo", "Del ultimo al primero", "toggle"),
+                SectionItem("animations:preset", "Perfil", "Ritmo de curvas", "select", options=["omarchy", "smooth", "snappy", "minimal"]),
+                SectionItem("animations:windows", "Estilo de ventanas", "Al abrir y cerrar", "select", options=["popin 87%", "popin 80%", "slide", "gnomed"]),
+                SectionItem("animations:windows_speed", "Velocidad", "Rapidez de ventanas", "slider", 1.0, 10.0, 0.5),
+                SectionItem("animations:fade_enabled", "Desvanecimiento", "Efecto fade", "toggle"),
+                SectionItem("animations:layers", "Capas y menus", "Animacion de paneles", "select", options=["fade", "slide", "popin 80%"]),
+                SectionItem("animations:workspaces_enabled", "Animar escritorios", "Al cambiar de escritorio", "toggle"),
+                SectionItem("animations:workspaces", "Estilo de escritorios", "Tipo de transicion", "select", options=["slide", "slidevert", "fade", "slidefade 20%"]),
+                SectionItem("animations:special", "Escritorio especial", "Transicion de scratchpad", "select", options=["slidevert", "slide", "fade"]),
             ],
             "cursor": [
-                SectionItem("cursor:size", "Cursor size (XCURSOR_SIZE)", "Tamaño del puntero en píxeles (16 / 20 / 24 / 28 / 32 / 48)", "select", options=["16", "20", "24", "28", "32", "48"]),
-                SectionItem("cursor:no_hardware_cursors", "Disable HW cursors", "Usa cursor por software (evita parpadeos o artefactos en GPUs)", "toggle"),
-                SectionItem("cursor:inactive_timeout", "Inactive timeout", "Segundos de inactividad antes de ocultar el cursor (0 = nunca)", "stepper", 0, 30, 1),
-                SectionItem("cursor:hide_on_key_press", "Hide on key press", "Oculta automáticamente el puntero al empezar a escribir", "toggle"),
-                SectionItem("cursor:hide_on_touch", "Hide on touch", "Oculta el puntero al interactuar con pantalla táctil", "toggle"),
-                SectionItem("cursor:warp_on_change_workspace", "Warp on workspace change", "Mueve el cursor a la ventana activa al cambiar de escritorio (0/1/2)", "stepper", 0, 2, 1),
-                SectionItem("cursor:zoom_factor", "Zoom factor", "Factor de lupa alrededor del puntero (1.0 = sin zoom)", "slider", 1.0, 3.0, 0.25),
-                SectionItem("cursor:zoom_rigid", "Zoom rigid", "El área ampliada sigue rígidamente el movimiento del puntero", "toggle"),
+                SectionItem("cursor:size", "Tamaño", "Puntero en pixeles", "select", options=["16", "20", "24", "28", "32", "48"]),
+                SectionItem("cursor:no_hardware_cursors", "Cursor por software", "Evitar parpadeos", "toggle"),
+                SectionItem("cursor:inactive_timeout", "Ocultar inactivo (s)", "0 = nunca", "stepper", 0, 30, 1),
+                SectionItem("cursor:hide_on_key_press", "Ocultar al escribir", "Al presionar teclas", "toggle"),
+                SectionItem("cursor:hide_on_touch", "Ocultar al tocar", "En pantalla tactil", "toggle"),
+                SectionItem("cursor:warp_on_change_workspace", "Centrar al cambiar", "Mover a ventana activa", "stepper", 0, 2, 1),
+                SectionItem("cursor:zoom_factor", "Zoom", "Lupa del puntero", "slider", 1.0, 3.0, 0.25),
+                SectionItem("cursor:zoom_rigid", "Zoom rigido", "Seguir el puntero", "toggle"),
             ],
             "keybinds": [
-                SectionItem("input:kb_layout", "Keyboard layout (kb_layout)", "Distribución de teclado XKB (ej. us, latam, es)", "select", options=["us", "latam", "es", "us,latam", "us,es", "br", "fr", "de"]),
-                SectionItem("input:kb_variant", "Keyboard variant (kb_variant)", "Variante de distribución (vacío, intl, deadtilde, nodeadkeys)", "select", options=["none", "intl", "deadtilde", "nodeadkeys", "dvorak", "colemak"]),
-                SectionItem("input:compose_key", "Tecla Bloq Mayús / Compose", "Alt Gr = Compose (Bloq Mayús normal) vs Omarchy default", "select", options=["Alt Gr (Compose)", "Bloq Mayús (Compose)"]),
-                SectionItem("action:fix_caps", "Aplicar corrección Bloq Mayús", "Guarda la opción en input.lua y libera Bloq Mayús de inmediato", "action"),
-                SectionItem("input:repeat_rate", "Keyboard repeat rate", "Frecuencia de repetición de teclas mantenidas (Hz)", "stepper", 10, 100, 5),
-                SectionItem("input:repeat_delay", "Keyboard repeat delay", "Retardo antes de iniciar repetición continua (ms)", "stepper", 150, 600, 25),
-                SectionItem("input:numlock_by_default", "Numlock by default", "Activa el bloque numérico automáticamente al iniciar sesión", "toggle"),
-                SectionItem("binds:omarchy_default_bindings", "Omarchy default bindings", "Carga los atajos predeterminados del sistema en hyprland.lua", "toggle"),
-                SectionItem("binds:omarchy_preinstalled_bindings", "Preinstalled app bindings", "Mantiene atajos para aplicaciones y webapps preinstaladas", "toggle"),
-                SectionItem("binds:hide_special", "Hide special on workspace change", "Cierra el scratchpad al cambiar a otro escritorio normal", "toggle"),
-                SectionItem("binds:workspace_back_forth", "Workspace back and forth", "Pulsar el número del escritorio actual regresa al escritorio previo", "toggle"),
-                SectionItem("binds:allow_cycles", "Allow workspace cycles", "Permite encadenar saltos al navegar por el historial de escritorios", "toggle"),
+                SectionItem("input:kb_layout", "Distribucion", "Idioma del teclado", "select", options=["us", "latam", "es", "us,latam", "us,es", "br", "fr", "de"]),
+                SectionItem("input:kb_variant", "Variante", "Disposicion de teclas", "select", options=["none", "intl", "deadtilde", "nodeadkeys", "dvorak", "colemak"]),
+                SectionItem("input:compose_key", "Tecla Compose", "Alt Gr o Bloq Mayus", "select", options=["Alt Gr (Compose)", "Bloq Mayús (Compose)"]),
+                SectionItem("action:fix_caps", "Corregir Bloq Mayus", "Guardar en input.lua", "action"),
+                SectionItem("input:repeat_rate", "Velocidad de repeticion", "Pulsaciones por segundo", "stepper", 10, 100, 5),
+                SectionItem("input:repeat_delay", "Retardo de repeticion", "Espera inicial (ms)", "stepper", 150, 600, 25),
+                SectionItem("input:numlock_by_default", "Bloq Num al iniciar", "Activar teclado numerico", "toggle"),
+                SectionItem("binds:omarchy_default_bindings", "Atajos de Omarchy", "Atajos base del sistema", "toggle"),
+                SectionItem("binds:omarchy_preinstalled_bindings", "Atajos de apps", "Apps preinstaladas", "toggle"),
+                SectionItem("binds:hide_special", "Ocultar scratchpad", "Al cambiar de escritorio", "toggle"),
+                SectionItem("binds:workspace_back_forth", "Ida y vuelta", "Volver al escritorio previo", "toggle"),
+                SectionItem("binds:allow_cycles", "Ciclos de escritorio", "Navegar historial", "toggle"),
             ],
             "devices": [
-                SectionItem("input:follow_mouse", "Follow mouse (0-3)", "Foco al mover cursor (0=Off, 1=Total, 2=Cursor suelto, 3=Separado)", "stepper", 0, 3, 1),
-                SectionItem("input:mouse_refocus", "Mouse refocus", "Vuelve a enfocar la ventana bajo el cursor al cruzar bordes", "toggle"),
-                SectionItem("input:sensitivity", "Mouse sensitivity", "Velocidad del puntero libinput (-1.0 a 1.0)", "slider", -1.0, 1.0, 0.05),
-                SectionItem("input:accel_profile", "Acceleration profile", "Curva de aceleración (flat = directa 1:1, adaptive = dinámica)", "select", options=["flat", "adaptive"]),
-                SectionItem("input:mouse_natural_scroll", "Mouse natural scroll", "Invierte el sentido de desplazamiento de la rueda del ratón", "toggle"),
-                SectionItem("input:left_handed", "Left-handed mouse", "Intercambia los botones izquierdo y derecho del ratón", "toggle"),
-                SectionItem("input:touchpad:natural_scroll", "Touchpad natural scroll", "Desplazamiento inverso natural en el touchpad", "toggle"),
-                SectionItem("input:touchpad:scroll_factor", "Touchpad scroll factor", "Multiplicador de velocidad de desplazamiento en el touchpad", "slider", 0.1, 2.0, 0.1),
-                SectionItem("input:touchpad:clickfinger_behavior", "Clickfinger behavior", "Clic con 2 dedos = derecho, 3 dedos = central", "toggle"),
-                SectionItem("input:touchpad:tap-to-click", "Tap to click", "Tocar suavemente el touchpad produce un clic izquierdo", "toggle"),
-                SectionItem("input:touchpad:disable_while_typing", "Disable while typing", "Desactiva el touchpad mientras se escribe en el teclado", "toggle"),
-                SectionItem("input:touchpad:drag_3fg", "Three-finger drag (drag_3fg)", "Arrastrar ventanas con 3 dedos (0=Off, 1=Activo, 2=Con bloqueo)", "stepper", 0, 2, 1),
-                SectionItem("gestures:workspace_swipe", "3-finger workspace swipe", "Gesto horizontal de 3 dedos para cambiar de escritorio (hl.gesture)", "toggle"),
+                SectionItem("input:follow_mouse", "Seguir al raton", "Enfocar al mover (0-3)", "stepper", 0, 3, 1),
+                SectionItem("input:mouse_refocus", "Reenfocar con raton", "Al cruzar bordes", "toggle"),
+                SectionItem("input:sensitivity", "Sensibilidad", "Velocidad del puntero", "slider", -1.0, 1.0, 0.05),
+                SectionItem("input:accel_profile", "Aceleracion", "Curva de movimiento", "select", options=["flat", "adaptive"]),
+                SectionItem("input:mouse_natural_scroll", "Scroll natural (Raton)", "Invertir rueda", "toggle"),
+                SectionItem("input:left_handed", "Modo zurdo", "Invertir botones", "toggle"),
+                SectionItem("input:touchpad:natural_scroll", "Scroll natural (Touchpad)", "Desplazamiento inverso", "toggle"),
+                SectionItem("input:touchpad:scroll_factor", "Velocidad de scroll", "En el touchpad", "slider", 0.1, 2.0, 0.1),
+                SectionItem("input:touchpad:clickfinger_behavior", "Clic multifinger", "2 dedos = der, 3 = medio", "toggle"),
+                SectionItem("input:touchpad:tap-to-click", "Toque para clic", "Clic suave en touchpad", "toggle"),
+                SectionItem("input:touchpad:disable_while_typing", "Desactivar al escribir", "Evitar toques accidentales", "toggle"),
+                SectionItem("input:touchpad:drag_3fg", "Arrastre con 3 dedos", "0=Off, 1=On, 2=Bloqueo", "stepper", 0, 2, 1),
+                SectionItem("gestures:workspace_swipe", "Gesto de escritorios", "Deslizar con 3 dedos", "toggle"),
             ],
             "monitors": [
-                SectionItem("display:scale", "Monitor scale (HiDPI)", "Factor de escala de la pantalla activa en monitors.lua", "select", options=self.scales),
-                SectionItem("display:mode", "Display resolution & Hz", "Resolución y tasa de refresco detectadas para el monitor", "select", options=mon_modes),
-                SectionItem("display:transform", "Rotación / Transform (0-3)", "Orientación (0=Normal, 1=90°, 2=180°, 3=270°)", "select", options=["0 (Normal)", "1 (90 grados)", "2 (180 grados)", "3 (270 grados)"]),
-                SectionItem("display:gdk_scale", "GDK_SCALE (Apps GTK)", "Escala entera para aplicaciones GTK/X11 (1 o 2)", "select", options=["1", "2"]),
-                SectionItem("display:vrr", "Adaptive Sync / VRR", "Frecuencia variable FreeSync/G-Sync (0=Off, 1=On, 2=Fullscreen)", "select", options=["0 (Desactivado)", "1 (Siempre activo)", "2 (Solo pantalla completa)"]),
-                SectionItem("display:xwayland_zero_scaling", "XWayland force zero scaling", "Evita el desenfoque en aplicaciones XWayland con HiDPI", "toggle"),
-                SectionItem("action:save_monitor", "Guardar en monitors.lua", "Escribe y aplica la configuración del monitor en ~/.config/hypr/monitors.lua", "action"),
+                SectionItem("display:scale", "Escala", "Tamaño de interfaz", "select", options=self.scales),
+                SectionItem("display:mode", "Resolucion y Hz", "Modo de pantalla", "select", options=mon_modes),
+                SectionItem("display:transform", "Rotacion", "Orientacion de pantalla", "select", options=["0 (Normal)", "1 (90 grados)", "2 (180 grados)", "3 (270 grados)"]),
+                SectionItem("display:gdk_scale", "Escala GTK", "Aplicaciones X11/GTK", "select", options=["1", "2"]),
+                SectionItem("display:vrr", "Frecuencia variable", "FreeSync / G-Sync", "select", options=["0 (Desactivado)", "1 (Siempre activo)", "2 (Solo pantalla completa)"]),
+                SectionItem("display:xwayland_zero_scaling", "XWayland nitido", "Sin reescalado borroso", "toggle"),
+                SectionItem("action:save_monitor", "Guardar monitor", "Escribir monitors.lua", "action"),
             ],
             "workspaces": [
-                SectionItem("workspace:count", "Persistent workspaces", "Cantidad de escritorios fijos creados con hl.workspace_rule", "stepper", 1, 10, 1),
-                SectionItem("workspace:layout_toggle", "Default workspace layout", "Algoritmo asignado a los escritorios (dwindle / scrolling / master)", "select", options=["dwindle", "scrolling", "master"]),
-                SectionItem("misc:focus_on_activate", "Focus on activate", "Enfoca automáticamente las aplicaciones que solicitan atención", "toggle"),
-                SectionItem("misc:dpms_key", "Key press enables DPMS", "Despierta la pantalla suspendida al pulsar cualquier tecla", "toggle"),
-                SectionItem("misc:dpms_mouse", "Mouse move enables DPMS", "Despierta la pantalla suspendida al mover el ratón", "toggle"),
-                SectionItem("misc:focus_under_fs", "On focus under fullscreen", "Al abrir ventana sobre fullscreen (0=Nada, 1=Reemplazar, 2=Salir FS)", "stepper", 0, 2, 1),
-                SectionItem("misc:animate_resizes", "Animate manual resizes", "Anima suavemente el redimensionado manual con el ratón", "toggle"),
-                SectionItem("misc:animate_dragging", "Animate window dragging", "Anima las ventanas mientras se arrastran con el puntero", "toggle"),
+                SectionItem("workspace:count", "Escritorios fijos", "Cantidad persistente", "stepper", 1, 10, 1),
+                SectionItem("workspace:layout_toggle", "Layout por defecto", "Disposicion en escritorios", "select", options=["dwindle", "scrolling", "master"]),
+                SectionItem("misc:focus_on_activate", "Enfocar al abrir", "Atender nuevas ventanas", "toggle"),
+                SectionItem("misc:dpms_key", "Despertar con teclado", "Encender pantalla", "toggle"),
+                SectionItem("misc:dpms_mouse", "Despertar con raton", "Encender al mover", "toggle"),
+                SectionItem("misc:focus_under_fs", "Foco en fullscreen", "Comportamiento (0-2)", "stepper", 0, 2, 1),
+                SectionItem("misc:animate_resizes", "Animar redimension", "Al ajustar tamaño", "toggle"),
+                SectionItem("misc:animate_dragging", "Animar arrastre", "Al mover ventanas", "toggle"),
             ],
             "layouts": [
-                SectionItem("dwindle:force_split", "Dwindle force split", "Dirección de división (0=Sigue ratón, 1=Izq/Arriba, 2=Der/Abajo)", "stepper", 0, 2, 1),
-                SectionItem("dwindle:preserve_split", "Dwindle preserve split", "Conserva la orientación de división independientemente del contenido", "toggle"),
-                SectionItem("dwindle:smart_split", "Dwindle smart split", "Divide según la posición exacta del cursor dentro de la ventana", "toggle"),
-                SectionItem("dwindle:smart_resizing", "Dwindle smart resizing", "Determina qué borde redimensionar según la dirección del ratón", "toggle"),
-                SectionItem("dwindle:split_ratio", "Dwindle default split ratio", "Proporción de tamaño al dividir ventanas (1.0 = 50%/50%)", "slider", 0.5, 1.5, 0.05),
-                SectionItem("layout:single_window_aspect", "Single window aspect ratio", "Limita el ancho de una ventana única en pantallas ultrawide", "select", options=["0 0", "1 1", "4 3", "16 9"]),
-                SectionItem("master:new_status", "Master new status", "Posición de nuevas ventanas en layout Master (master / slave / inherit)", "select", options=["master", "slave", "inherit"]),
-                SectionItem("master:mfact", "Master factor (mfact)", "Porcentaje de pantalla que ocupa la columna principal Master", "slider", 0.20, 0.80, 0.05),
-                SectionItem("master:orientation", "Master orientation", "Ubicación del área principal Master en la pantalla", "select", options=["left", "right", "top", "bottom", "center"]),
-                SectionItem("scrolling:column_width", "Scrolling column width", "Ancho relativo de cada columna en layout Scrolling (0.49 = 2 cols)", "slider", 0.25, 1.0, 0.02),
-                SectionItem("group:groupbar:enabled", "Groupbar enabled", "Muestra la barra de pestañas superior en ventanas agrupadas", "toggle"),
-                SectionItem("group:groupbar:font_size", "Groupbar font size", "Tamaño de fuente en las pestañas de grupos de ventanas", "stepper", 8, 20, 1),
-                SectionItem("group:groupbar:height", "Groupbar height", "Altura en píxeles de la barra de grupos", "stepper", 14, 36, 2),
-                SectionItem("group:groupbar:gradients", "Groupbar gradients", "Dibuja fondos con estilo degradado en las pestañas de grupo", "toggle"),
+                SectionItem("dwindle:force_split", "Direccion de division", "0=Raton, 1=Izq, 2=Der", "stepper", 0, 2, 1),
+                SectionItem("dwindle:preserve_split", "Conservar division", "Mantener orientacion", "toggle"),
+                SectionItem("dwindle:smart_split", "Division inteligente", "Segun posicion del cursor", "toggle"),
+                SectionItem("dwindle:smart_resizing", "Redimension inteligente", "Segun direccion del raton", "toggle"),
+                SectionItem("dwindle:split_ratio", "Proporcion de division", "Tamaño relativo", "slider", 0.5, 1.5, 0.05),
+                SectionItem("layout:single_window_aspect", "Proporcion ventana unica", "En pantallas anchas", "select", options=["0 0", "1 1", "4 3", "16 9"]),
+                SectionItem("master:new_status", "Nuevas en Master", "Posicion inicial", "select", options=["master", "slave", "inherit"]),
+                SectionItem("master:mfact", "Tamaño Master", "Ancho de columna principal", "slider", 0.20, 0.80, 0.05),
+                SectionItem("master:orientation", "Orientacion Master", "Ubicacion principal", "select", options=["left", "right", "top", "bottom", "center"]),
+                SectionItem("scrolling:column_width", "Ancho en Scrolling", "Tamaño de columna", "slider", 0.25, 1.0, 0.02),
+                SectionItem("group:groupbar:enabled", "Barra de grupos", "Pestañas en grupos", "toggle"),
+                SectionItem("group:groupbar:font_size", "Fuente de grupo", "Tamaño de texto", "stepper", 8, 20, 1),
+                SectionItem("group:groupbar:height", "Altura de barra", "Alto en pixeles", "stepper", 14, 36, 2),
+                SectionItem("group:groupbar:gradients", "Degradado en grupos", "Fondo estilizado", "toggle"),
             ],
             "rules": [
-                SectionItem("rules:terminal_scroll", "Terminal touchpad scroll", "Velocidad de scroll touchpad en Alacritty/Kitty/Foot (o.window)", "slider", 0.2, 3.0, 0.1),
-                SectionItem("rules:browser_opaque", "Opaque browsers", "Desactiva la transparencia global en navegadores Chromium/Firefox", "toggle"),
-                SectionItem("rules:media_opaque", "Opaque media & video apps", "Mantiene 100% opacos reproductores y editores de vídeo (MPV, VLC, OBS)", "toggle"),
-                SectionItem("rules:pavucontrol_float", "Float Pavucontrol", "Abre el mezclador de sonido Pavucontrol como ventana flotante centrada", "toggle"),
-                SectionItem("rules:calculator_float", "Float Calculator", "Abre la calculadora en modo ventana flotante centrada", "toggle"),
-                SectionItem("rules:pip_float", "Picture-in-Picture float & pin", "Fija las ventanas Picture-in-Picture flotantes en esquina", "toggle"),
-                SectionItem("rules:steam_float", "Float Steam windows", "Abre Steam y su lista de amigos como ventanas flotantes", "toggle"),
-                SectionItem("rules:localsend_float", "Float LocalSend", "Abre LocalSend en ventana flotante centrada de 1100x700", "toggle"),
+                SectionItem("rules:terminal_scroll", "Scroll en terminal", "Velocidad del touchpad", "slider", 0.2, 3.0, 0.1),
+                SectionItem("rules:browser_opaque", "Navegadores opacos", "Sin transparencia", "toggle"),
+                SectionItem("rules:media_opaque", "Multimedia opaco", "Video sin transparencia", "toggle"),
+                SectionItem("rules:pavucontrol_float", "Pavucontrol flotante", "Control de audio centrado", "toggle"),
+                SectionItem("rules:calculator_float", "Calculadora flotante", "Ventana centrada", "toggle"),
+                SectionItem("rules:pip_float", "Picture-in-Picture", "Flotante y fijo", "toggle"),
+                SectionItem("rules:steam_float", "Steam flotante", "Amigos y dialogos", "toggle"),
+                SectionItem("rules:localsend_float", "LocalSend flotante", "Ventana centrada", "toggle"),
             ],
             "autostart": self._build_autostart_section_items(),
             "bar": self._build_bar_section_items(),
             "themes": self._build_themes_section_items(),
             "omarchy": [
-                SectionItem("omarchy:theme", "Active Omarchy Theme", "Selecciona un tema de Omarchy (pulsa Aplicar para activarlo)", "select", options=themes),
-                SectionItem("action:next_wallpaper", "Cambiar fondo de pantalla", "Alterna al siguiente wallpaper del tema Omarchy activo", "action"),
-                SectionItem("action:toggle_bar", "Alternar barra superior Omarchy", "Muestra u oculta la barra superior de Omarchy", "action"),
-                SectionItem("action:toggle_nightlight", "Alternar luz nocturna", "Activa o desactiva el filtro cálido hyprsunset", "action"),
+                SectionItem("omarchy:theme", "Tema", "Tema del sistema", "select", options=themes),
+                SectionItem("action:next_wallpaper", "Siguiente fondo", "Cambiar fondo actual", "action"),
+                SectionItem("action:toggle_bar", "Alternar barra", "Mostrar u ocultar barra", "action"),
+                SectionItem("action:toggle_nightlight", "Luz nocturna", "Filtro calido de pantalla", "action"),
             ],
         }
 
@@ -652,8 +650,8 @@ class MecaTUI:
         if self.view_mode == "theme_creator":
             t_name = self.theme_creator_spec.get("name", "nuevo-tema")
             t_base = self.theme_creator_spec.get("base_theme", self.theme_engine.current_theme)
-            title_left = f" MECA Creacion de Tema: {t_name} "
-            title_right = f"Plantilla: {t_base} | Esc: Volver "
+            title_left = f" NUEVO TEMA: {t_name} "
+            title_right = f"Base: {t_base} │ Esc: Cancelar "
         else:
             ver = HyprIPC.get_version_info()
             title_left = " MECA HyprConfig "
@@ -682,7 +680,7 @@ class MecaTUI:
 
         # 3. Barra Inferior de Estado en fila exacta 'rows' (con guía q/Esc: Salir)
         if self.view_mode == "theme_creator":
-            keys_hint = " r:Restablecer │ Esc/c:Volver │ a:Crear Tema "
+            keys_hint = " Esc/c: Cancelar │ a: Guardar "
         else:
             keys_hint = " Tab: Foco │ r: Restablecer │ c: Cancelar │ a: Aplicar │ q/Esc: Salir "
             if cols < 100:
@@ -760,11 +758,10 @@ class MecaTUI:
         is_hover: bool,
     ) -> Tuple[str, str, str, Tuple[int, int]]:
         """
-        Renderiza un tema guardado con apariencia de contenedor de tarjeta cuadrada sin cuadrados de colores:
-        ┌──────────────────────────────────────────────────────────────────┐
-        │ ▸ nombre [SELECCIONADO]  Modo: dark │ Iconos: Yaru  [Aplicar]    │
-        └──────────────────────────────────────────────────────────────────┘
-        Seleccionar la tarjeta resalta el tema; se activa al pulsar 'Aplicar'.
+        Renderiza un tema guardado con contenedor de tarjeta cuadrada:
+        - Cuando está seleccionado (is_chosen), resalta su borde haciéndolo más grueso (┏━━━┓ / ┃...┃ / ┗━━━┛).
+        - Muestra el nombre del tema, solo el icono del modo (󰖔 oscuro / 󰖨 claro) y el tema de iconos,
+          sin indicadores de texto "seleccionado".
         """
         u_name = item.name
         info = self.theme_engine.get_theme_info(u_name)
@@ -772,61 +769,48 @@ class MecaTUI:
         icons = info.get("icon_theme", "Adwaita")
 
         u_slug = self.theme_engine.normalize_theme_slug(u_name)
-        act_slug = self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme)
         sel_slug = self.theme_engine.normalize_theme_slug(
             str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
         )
 
-        is_act = (u_slug == act_slug)
         is_chosen = (u_slug == sel_slug)
 
         card_w = max(28, width - 3)
         inner_w = card_w - 2
 
-        border_col = "accent" if (is_chosen or is_sel or is_hover) else ("bright_foreground" if is_act else "muted")
+        border_col = "accent" if is_chosen else ("bright_foreground" if (is_sel or is_hover) else "muted")
         card_bg = (
             "soft_hover"
             if is_hover
-            else ("soft_selection" if (is_chosen or is_sel) else ("soft_muted" if is_act else None))
+            else ("soft_selection" if (is_chosen or is_sel) else None)
         )
 
-        if is_chosen and not is_act:
-            badge = " [SELECCIONADO]"
-            btn_txt = " [Seleccionado] "
-        elif is_act and is_chosen:
-            badge = " [ACTIVO]"
-            btn_txt = " [Activo] "
-        elif is_act:
-            badge = " [ACTIVO]"
-            btn_txt = " [Seleccionar] "
+        mode_icon = "󰖔" if mode == "dark" else "󰖨"
+        left_str = f"  {u_name}"
+        right_str = f"  {mode_icon}  {icons}  "
+        avail_left_w = max(6, inner_w - len(right_str))
+        left_padded = left_str[:avail_left_w].ljust(avail_left_w)
+        inner_plain = (left_padded + right_str)[:inner_w].ljust(inner_w)
+
+        is_bold_card = (is_chosen or is_sel or is_hover)
+        if is_chosen:
+            # Borde grueso para la tarjeta seleccionada
+            top_border = " " + self.theme_engine.style(border_col, None, "┏" + ("━" * inner_w) + "┓", bold=True)
+            bot_border = " " + self.theme_engine.style(border_col, None, "┗" + ("━" * inner_w) + "┛", bold=True)
+            side_char = "┃"
         else:
-            badge = ""
-            btn_txt = " [Seleccionar] "
+            # Borde delgado estándar
+            top_border = " " + self.theme_engine.style(border_col, None, "┌" + ("─" * inner_w) + "┐", bold=is_bold_card)
+            bot_border = " " + self.theme_engine.style(border_col, None, "└" + ("─" * inner_w) + "┘", bold=is_bold_card)
+            side_char = "│"
 
-        btn_vis_w = len(btn_txt)
-        marker = " ▸ " if is_chosen else "   "
-        title_str = f"{marker}{u_name}{badge}"
-        meta_str = f"  │  Modo: {mode}  │  Iconos: {icons}"
-        avail_left_w = max(10, inner_w - btn_vis_w - 1)
-        left_plain = (title_str + meta_str)[:avail_left_w].ljust(avail_left_w)
-        pad_mid_w = max(0, inner_w - len(left_plain) - btn_vis_w)
-
-        is_bold_card = (is_chosen or is_sel or is_hover or is_act)
-        top_border = " " + self.theme_engine.style(border_col, None, "┌" + ("─" * inner_w) + "┐", bold=is_bold_card)
-        bot_border = " " + self.theme_engine.style(border_col, None, "└" + ("─" * inner_w) + "┘", bold=is_bold_card)
-
-        left_styled = self.theme_engine.style("bright_foreground", card_bg, left_plain, bold=is_bold_card)
-        pad_styled = self.theme_engine.style("foreground", card_bg, " " * pad_mid_w)
-        btn_fg = "accent" if (is_chosen or is_sel or is_hover or is_act) else "bright_foreground"
-        btn_styled = self.theme_engine.style(btn_fg, card_bg, btn_txt, bold=True)
+        inner_styled = self.theme_engine.style("bright_foreground" if is_bold_card else "foreground", card_bg, inner_plain, bold=is_bold_card)
 
         mid_line = (
             " "
-            + self.theme_engine.style(border_col, None, "│", bold=is_bold_card)
-            + left_styled
-            + pad_styled
-            + btn_styled
-            + self.theme_engine.style(border_col, None, "│", bold=is_bold_card)
+            + self.theme_engine.style(border_col, None, side_char, bold=is_bold_card)
+            + inner_styled
+            + self.theme_engine.style(border_col, None, side_char, bold=is_bold_card)
         )
 
         return top_border, mid_line, bot_border, (1, card_w)
@@ -974,7 +958,7 @@ class MecaTUI:
         # Separador antes de los botones físicos
         lines.append(" " + self.theme_engine.fg("muted", "─" * max(1, width - 2)))
 
-        # Renderizar los 3 botones compactos y elegantes (3 líneas de alto)
+        # Renderizar los botones compactos y elegantes (3 líneas de alto)
         btn_top_screen_y = 2 + len(lines)
         btn_lines = self._render_3d_buttons(width, btn_top_screen_y, content_start_x)
         lines.extend(btn_lines)
@@ -1080,19 +1064,17 @@ class MecaTUI:
 
     def _render_3d_buttons(self, width: int, btn_top_screen_y: int, content_start_x: int) -> List[str]:
         """
-        Dibuja los 3 botones inferiores compactos de 3 líneas con bisel 3D Unicode y destello suave:
-          ┌─────────────┐  ┌──────────┐  ┌───────────┐
-          ┃ Restablecer │  ┃ Cancelar │  ┃  Aplicar  │
-          ┗━━━━━━━━━━━━━┙  ┗━━━━━━━━━━┙  ┗━━━━━━━━━━━┙
+        Dibuja los botones inferiores compactos de 3 líneas con bisel 3D Unicode:
+        - En la ventana principal: Restablecer, Cancelar, Aplicar.
+        - En la ventana de creación de tema: Cancelar, Guardar (sin Restablecer).
         """
         self._button_click_map.clear()
         self._button_row_range = (btn_top_screen_y, btn_top_screen_y + 2)
 
         if self.view_mode == "theme_creator":
             buttons_spec = [
-                ("reset", 0, " Restablecer "),
-                ("cancel", 1, "  Volver  "),
-                ("save", 2, " Crear Tema "),
+                ("cancel", 1, " Cancelar "),
+                ("save", 2, " Guardar "),
             ]
         else:
             buttons_spec = [
@@ -1227,7 +1209,6 @@ class MecaTUI:
             c_hov = (hover_sub == "control") or (self.dropdown_open and self.dropdown_item == item)
             inner_bg = "soft_hover" if c_hov else ("soft_selection" if is_sel else None)
             if hex_c:
-                # Mostrar previsualización del color junto al código hexadecimal
                 vis_lbl = f" ██ {val_str} ▾ "
                 inner_w = len(vis_lbl)
                 r_c, g_c, b_c = self.theme_engine.hex_to_rgb(hex_c)
@@ -1298,14 +1279,7 @@ class MecaTUI:
         ]
 
     def _render_modal_overlay(self, cols: int, rows: int) -> List[str]:
-        """
-        Renderiza ventanas modales centradas para:
-        - "confirm_section_change": aplicar/descartar cambios al cambiar de sección
-        - "confirm_reset": confirmar restablecimiento a valores predeterminados
-        - "input_autostart": selector desplegable de aplicaciones/servicios o entrada de comando
-        - "input_theme_hex": ingresar color hexadecimal con previsualización en vivo
-        - "input_creator_text": ingresar nombre del nuevo tema o ruta personalizada
-        """
+        """Renderiza ventanas modales centradas."""
         self._modal_button_click_map.clear()
         self._modal_kind_click_range = (0, 0, 0)
         self._modal_mode_click_range = (0, 0, 0)
@@ -1319,23 +1293,23 @@ class MecaTUI:
 
         if self.modal_state == "confirm_section_change":
             title = " CAMBIOS SIN APLICAR "
-            msg_1 = "Has modificado opciones en la seccion actual."
-            msg_2 = "¿Deseas aplicar los cambios antes de cambiar de seccion?"
+            msg_1 = "Hay cambios pendientes."
+            msg_2 = "¿Aplicar antes de cambiar de seccion?"
             modal_btns = [
                 (0, " Descartar "),
                 (1, " Cancelar "),
                 (2, " Aplicar "),
             ]
         else:
-            title = " RESTABLECER CONFIGURACION "
-            msg_1 = "Se restauraran todos los ajustes a los valores por defecto."
-            msg_2 = "¿Deseas continuar con el restablecimiento?"
+            title = " RESTABLECER "
+            msg_1 = "Se restauraran los valores por defecto."
+            msg_2 = "¿Continuar?"
             modal_btns = [
                 (0, " Cancelar "),
                 (1, " Confirmar "),
             ]
 
-        mw = min(max(58, len(msg_2) + 6), cols - 4)
+        mw = min(max(52, len(msg_2) + 8), cols - 4)
         inner_mw = mw - 2
         mh = 10
         start_x = max(2, (cols - mw) // 2)
@@ -1408,24 +1382,17 @@ class MecaTUI:
 
     def _render_autostart_modal(self, cols: int, rows: int) -> List[str]:
         """
-        Renderiza el modal para agregar a Autostart:
-        - La selección de aplicación instalada es un selector desplegable (dropdown)
-          que SOLO funciona cuando está seleccionado el tipo 'Aplicación / Servicio' ('launch').
-        - Cuando se elige 'Comando / Script' ('exec'), el selector desplegable de aplicaciones
-          queda deshabilitado.
+        Renderiza el modal de Autostart con títulos cortos y directos.
+        Cuando el selector de aplicación está deshabilitado (en modo Comando), solo se ve apagado.
         """
         is_app_mode = (self.modal_input_kind == "launch")
         if not is_app_mode:
             self.autostart_dropdown_open = False
 
-        title = " AGREGAR A AUTOSTART (APLICACION / SERVICIO / COMANDO) "
-        kind_val = (
-            "Aplicacion / Servicio (o.launch_on_start)"
-            if is_app_mode
-            else "Comando personalizado (o.exec_on_start)  "
-        )
+        title = " AGREGAR A AUTOSTART "
+        kind_val = "Aplicacion o servicio" if is_app_mode else "Comando"
 
-        mw = min(66, cols - 4)
+        mw = min(62, cols - 4)
         inner_mw = mw - 2
         show_list = is_app_mode and self.autostart_dropdown_open
         list_rows = 6 if show_list else 0
@@ -1439,7 +1406,7 @@ class MecaTUI:
         sep_line = "├" + ("─" * inner_mw) + "┤"
         bot_line = "┗" + ("━" * inner_mw) + "┙"
 
-        selector_line = f"  Tipo (Tab/Clic): {kind_val} ▾".ljust(inner_mw)[:inner_mw]
+        selector_line = f"  Tipo: {kind_val} ▾".ljust(inner_mw)[:inner_mw]
         self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
 
         overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
@@ -1447,26 +1414,25 @@ class MecaTUI:
         overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
         overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
 
-        # Selector desplegable de aplicación (filas start_y + 4..6)
+        # Selector desplegable de aplicación (apagado cuando no está en modo aplicación, sin texto "deshabilitado")
         box_w = inner_mw - 6
         filtered = self._get_filtered_autostart_apps()
+        arrow_char = "▴" if (is_app_mode and self.autostart_dropdown_open) else "▾"
+        if self.autostart_selected_app_name and is_app_mode:
+            dd_txt = f" {self.autostart_selected_app_name} ({self.modal_input_text})"
+        elif filtered and 0 <= self.autostart_app_idx < len(filtered):
+            cur_a = filtered[self.autostart_app_idx]
+            dd_txt = f" {cur_a['name']} — {cur_a['cmd']}"
+        else:
+            dd_txt = " Seleccionar aplicacion..."
+        dd_inner = (dd_txt[: box_w - 3].ljust(box_w - 3)) + f" {arrow_char} "
+        dd_lbl = "  Seleccionar aplicacion:"
+
         if is_app_mode:
-            arrow_char = "▴" if self.autostart_dropdown_open else "▾"
-            if self.autostart_selected_app_name:
-                dd_txt = f" {self.autostart_selected_app_name} ({self.modal_input_text})"
-            elif filtered and 0 <= self.autostart_app_idx < len(filtered):
-                cur_a = filtered[self.autostart_app_idx]
-                dd_txt = f" {cur_a['name']} — {cur_a['cmd']}"
-            else:
-                dd_txt = f" Desplegar lista de aplicaciones ({len(filtered)} disponibles)..."
-            dd_inner = (dd_txt[: box_w - 3].ljust(box_w - 3)) + f" {arrow_char} "
-            dd_lbl = "  Seleccionar aplicacion instalada (Clic o ↓ para desplegar):"
             dd_border_col = "accent" if self.autostart_dropdown_open else "bright_foreground"
             dd_bg = "soft_hover" if self.autostart_dropdown_open else "soft_selection"
             self._autostart_dropdown_btn_range = (start_y + 5, start_y + 6, start_x + 2, start_x + inner_mw - 2)
         else:
-            dd_inner = " [Deshabilitado: solo activo en modo Aplicacion / Servicio] "[:box_w].ljust(box_w)
-            dd_lbl = "  Selector desplegable de aplicacion (Inactivo en modo Comando):"
             dd_border_col = "muted"
             dd_bg = "background"
             self._autostart_dropdown_btn_range = (0, 0, 0, 0)
@@ -1520,12 +1486,8 @@ class MecaTUI:
                     overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("foreground", "background", f"┃  │{empty_dd}│  │"))
             cur_y += list_rows
 
-        # Campo de texto para buscar aplicación (en modo launch) o escribir comando (en modo exec)
-        input_lbl = (
-            "  Filtrar aplicacion o editar comando a lanzar:"
-            if is_app_mode
-            else "  Escribir comando o script para o.exec_on_start:"
-        )
+        # Campo de texto corto e intuitivo
+        input_lbl = "  Aplicacion o comando:"
         shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
         input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
         input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
@@ -1590,17 +1552,17 @@ class MecaTUI:
         """Renderiza la ventana modal interactiva para entrada de Color Hex (con previsualización) o texto."""
         is_hex_mode = (self.modal_state == "input_theme_hex")
         if is_hex_mode:
-            title = " ESTABLECER CODIGO DE COLOR HEXADECIMAL "
+            title = " COLOR HEXADECIMAL "
             prop_name = self.modal_hex_target.replace("creator:", "")
-            sub_lbl = f"  Propiedad: {prop_name}"
-            prompt_lbl = "Escribe el codigo hexadecimal (#RRGGBB, ej. #E31B23):"
+            sub_lbl = f"  {prop_name}"
+            prompt_lbl = "Codigo #RRGGBB:"
         else:
-            title = " EDITAR VALOR DEL TEMA OMARCHY "
+            title = " EDITAR VALOR "
             prop_name = self.modal_text_target.replace("creator:", "")
-            sub_lbl = f"  Campo: {prop_name}"
-            prompt_lbl = "Escribe el nombre del tema o ruta del archivo:"
+            sub_lbl = f"  {prop_name}"
+            prompt_lbl = "Nombre o ruta:"
 
-        mw = min(64, cols - 4)
+        mw = min(58, cols - 4)
         inner_mw = mw - 2
         mh = 12
         start_x = max(2, (cols - mw) // 2)
@@ -1624,7 +1586,7 @@ class MecaTUI:
             r_c, g_c, b_c = self.theme_engine.hex_to_rgb(valid_hex)
             br, bg_v, bb = self.theme_engine.hex_to_rgb(self.theme_engine.colors.get("soft_selection", "#292e42"))
             swatch_seq = f"\033[48;2;{br};{bg_v};{bb}m\033[38;2;{r_c};{g_c};{b_c}m████\033[0m"
-            prev_prefix = f"{sub_lbl}  │  Vista previa: "
+            prev_prefix = f"{sub_lbl}  │  "
             rem_w = max(1, inner_mw - len(prev_prefix) - 4)
             prev_suffix = f" {valid_hex}".ljust(rem_w)[:rem_w]
             line3 = (
@@ -2227,14 +2189,14 @@ class MecaTUI:
                         self.status_message = msg
             return
 
-        # Atajos rápidos físicos directos (a/s: Aplicar, c: Cancelar, r: Restablecer)
-        if ch in (b"a", b"A", b"s", b"S"):
+        # Atajos rápidos físicos directos (a/s/g: Aplicar/Guardar, c: Cancelar, r: Restablecer)
+        if ch in (b"a", b"A", b"s", b"S", b"g", b"G"):
             self.save_all()
             return
         if ch in (b"c", b"C"):
             self.cancel_changes()
             return
-        if ch in (b"r", b"R"):
+        if ch in (b"r", b"R") and self.view_mode != "theme_creator":
             self.reset_to_defaults()
             return
 
@@ -2244,6 +2206,8 @@ class MecaTUI:
                 self.active_pane = "content"
             elif self.active_pane == "content":
                 self.active_pane = "buttons"
+                if self.view_mode == "theme_creator" and self.selected_button_idx == 0:
+                    self.selected_button_idx = 2
             else:
                 self.active_pane = "sidebar"
             return
@@ -2251,7 +2215,8 @@ class MecaTUI:
         # Navegación izquierda/derecha
         if ch == b"\x1b[D":  # Flecha Izquierda
             if self.active_pane == "buttons":
-                self.selected_button_idx = max(0, self.selected_button_idx - 1)
+                min_btn = 1 if self.view_mode == "theme_creator" else 0
+                self.selected_button_idx = max(min_btn, self.selected_button_idx - 1)
             elif self.active_pane == "content":
                 self._adjust_current_item(delta=-1)
             else:
@@ -2289,7 +2254,7 @@ class MecaTUI:
             if self.active_pane == "sidebar":
                 self.active_pane = "content"
             elif self.active_pane == "buttons":
-                if self.selected_button_idx == 0:
+                if self.selected_button_idx == 0 and self.view_mode != "theme_creator":
                     self.reset_to_defaults()
                 elif self.selected_button_idx == 1:
                     self.cancel_changes()
@@ -2427,7 +2392,7 @@ class MecaTUI:
                         self.status_message = f"{s_title}: {s_desc}"
                     return
 
-                # Hover sobre los 3 botones inferiores 3D
+                # Hover sobre los botones inferiores 3D
                 if x > sidebar_w + 1 and btn_y_min <= y <= btn_y_max:
                     self.hover_sidebar_idx = None
                     self.hover_item_idx = None
@@ -2497,7 +2462,7 @@ class MecaTUI:
                     cancel_r = self._button_click_map.get("cancel")
                     save_r = self._button_click_map.get("save")
 
-                    if reset_r and reset_r[0] <= x <= reset_r[1]:
+                    if reset_r and reset_r[0] <= x <= reset_r[1] and self.view_mode != "theme_creator":
                         self.active_pane = "buttons"
                         self.selected_button_idx = 0
                         self.reset_to_defaults()
@@ -2524,6 +2489,8 @@ class MecaTUI:
                             self.active_pane = "content"
                         elif self.active_pane == "content":
                             self.active_pane = "buttons"
+                            if self.view_mode == "theme_creator" and self.selected_button_idx == 0:
+                                self.selected_button_idx = 2
                         else:
                             self.active_pane = "sidebar"
                     return
@@ -2681,7 +2648,7 @@ class MecaTUI:
                 new_spec["name"] = cur_name
                 new_spec["base_theme"] = str(val)
                 self.theme_creator_spec.update(new_spec)
-                self.status_message = f"Plantilla base '{val}' cargada en el estudio de creacion."
+                self.status_message = f"Plantilla '{val}' cargada."
             elif field == "widget_alpha":
                 self.theme_creator_spec["widget_alpha"] = float(val)
             else:
@@ -2698,7 +2665,7 @@ class MecaTUI:
         if key.startswith("bar_widget:"):
             s_key = key.split(":", 1)[1]
             self.settings[s_key] = str(val)
-            self.status_message = f"Widget '{val}' seleccionado (Pulsa 'Aplicar' para guardar)."
+            self.status_message = f"Widget '{val}' seleccionado."
             return
 
         if key == "input:kb_variant":
@@ -2737,7 +2704,7 @@ class MecaTUI:
         if key == "omarchy:theme":
             self.settings["omarchy_theme_name"] = str(val)
             self.section_items["themes"] = self._build_themes_section_items()
-            self.status_message = f"Tema '{val}' seleccionado (Pulsa 'Aplicar' para activarlo)."
+            self.status_message = f"Tema '{val}' seleccionado."
             return
 
         if key in self.KEY_TO_SETTING:
@@ -2771,9 +2738,10 @@ class MecaTUI:
             self.view_mode = "theme_creator"
             self.current_section_idx = 0
             self.selected_item_idx = 1
+            self.selected_button_idx = 2
             self.content_scroll_offset = 0
             self.active_pane = "content"
-            self.status_message = "Estudio de Creacion de Temas: Configura los aspectos y pulsa 'Aplicar'."
+            self.status_message = "Nuevo tema: configura y pulsa 'Guardar'."
             return
 
         elif action_key == "action:clone_theme":
@@ -2787,9 +2755,10 @@ class MecaTUI:
             self.view_mode = "theme_creator"
             self.current_section_idx = 0
             self.selected_item_idx = 1
+            self.selected_button_idx = 2
             self.content_scroll_offset = 0
             self.active_pane = "content"
-            self.status_message = f"Duplicando '{base_t}': Personaliza los parametros y pulsa 'Aplicar'."
+            self.status_message = f"Duplicando '{base_t}': personaliza y pulsa 'Guardar'."
             return
 
         elif action_key == "creator:name":
@@ -2808,9 +2777,9 @@ class MecaTUI:
             if self.config_sync.reset_bar_defaults(self.settings):
                 self.saved_settings = dict(self.settings)
                 self.section_items["bar"] = self._build_bar_section_items()
-                self.status_message = "✓ Barra superior restaurada al diseño predeterminado de Omarchy."
+                self.status_message = "✓ Barra superior restaurada."
             else:
-                self.status_message = "Error al restaurar la barra superior."
+                self.status_message = "Error al restaurar barra."
             return
 
         elif action_key == "action:restart_shell":
@@ -2820,7 +2789,7 @@ class MecaTUI:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                self.status_message = "✓ Reiniciando shell y barra superior de Omarchy..."
+                self.status_message = "✓ Reiniciando barra superior..."
             except Exception:
                 self.status_message = "No se encontró 'omarchy-restart-shell'."
             return
@@ -2829,7 +2798,7 @@ class MecaTUI:
             use_ralt = (self.settings.get("compose_key", "ralt") == "ralt")
             self.config_sync.fix_caps_lock(use_ralt=use_ralt)
             self.saved_settings["compose_key"] = self.settings.get("compose_key", "ralt")
-            self.status_message = "✓ Tecla Bloq Mayus configurada y guardada en input.lua."
+            self.status_message = "✓ Tecla Bloq Mayus guardada."
 
         elif action_key == "action:save_monitor":
             m_name = self.monitors[0].get("name", "") if self.monitors else ""
@@ -2851,9 +2820,9 @@ class MecaTUI:
                 self.saved_settings["monitor_scale"] = sc
                 self.saved_settings["monitor_transform"] = tr
                 self.saved_settings["monitor_gdk_scale"] = gdk
-                self.status_message = f"✓ Monitor {m_name} ({mode}, {sc}x) guardado en monitors.lua."
+                self.status_message = f"✓ Monitor {m_name} guardado."
             else:
-                self.status_message = "Error al guardar monitors.lua."
+                self.status_message = "Error al guardar monitor."
 
         elif action_key == "action:next_wallpaper":
             try:
@@ -2862,9 +2831,9 @@ class MecaTUI:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                self.status_message = "✓ Fondo de pantalla de Omarchy cambiado."
+                self.status_message = "✓ Fondo cambiado."
             except Exception:
-                self.status_message = "No se encontró el comando 'omarchy-theme-bg-next'."
+                self.status_message = "No se encontró 'omarchy-theme-bg-next'."
 
         elif action_key == "action:toggle_bar":
             try:
@@ -2875,9 +2844,9 @@ class MecaTUI:
                 )
                 self.settings["bar_visible"] = not bool(self.settings.get("bar_visible", True))
                 self.saved_settings["bar_visible"] = self.settings["bar_visible"]
-                self.status_message = "✓ Visibilidad de la barra superior de Omarchy alternada."
+                self.status_message = "✓ Barra alternada."
             except Exception:
-                self.status_message = "No se encontró el comando 'omarchy-toggle-bar'."
+                self.status_message = "No se encontró 'omarchy-toggle-bar'."
 
         elif action_key == "action:toggle_nightlight":
             try:
@@ -2886,9 +2855,9 @@ class MecaTUI:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                self.status_message = "✓ Filtro de luz nocturna (hyprsunset) alternado."
+                self.status_message = "✓ Luz nocturna alternada."
             except Exception:
-                self.status_message = "No se encontró el comando 'omarchy-toggle-nightlight'."
+                self.status_message = "No se encontró 'omarchy-toggle-nightlight'."
 
     def _has_bar_changes(self) -> bool:
         """Verifica si se modificaron opciones de la barra superior de Omarchy."""
@@ -2899,31 +2868,27 @@ class MecaTUI:
 
     def save_all(self) -> None:
         """
-        En la ventana de creación de temas ('theme_creator'), construye y activa el nuevo tema Omarchy.
-        En la ventana principal ('main'), aplica y guarda todos los cambios en Hyprland, autostart,
-        barra superior y tema Omarchy seleccionado.
+        En la ventana de creación de temas ('theme_creator'), guarda el nuevo tema en
+        /home/leonardo/.config/omarchy/themes/<slug> y regresa a la ventana de configuración.
+        En la ventana principal ('main'), aplica y guarda todos los cambios.
         """
         if self.view_mode == "theme_creator":
-            self.status_message = "Creando y aplicando nuevo tema Omarchy..."
+            self.status_message = "Guardando tema..."
             self.render()
-            ok, msg = self.theme_engine.create_theme_from_spec(self.theme_creator_spec, apply_now=True)
+            ok, msg = self.theme_engine.create_theme_from_spec(self.theme_creator_spec, activate=False)
             if ok:
-                self._sync_theme_into_settings()
-                self.saved_settings.update({
-                    "omarchy_theme_name": self.settings["omarchy_theme_name"],
-                    "omarchy_theme_mode": self.settings["omarchy_theme_mode"],
-                    "omarchy_theme_accent": self.settings["omarchy_theme_accent"],
-                    "omarchy_theme_bg": self.settings["omarchy_theme_bg"],
-                    "omarchy_theme_fg": self.settings["omarchy_theme_fg"],
-                    "omarchy_theme_sel": self.settings["omarchy_theme_sel"],
-                    "omarchy_icons": self.settings["omarchy_icons"],
-                })
+                new_slug = self.theme_engine.normalize_theme_slug(
+                    str(self.theme_creator_spec.get("name", "mi-tema-omarchy"))
+                )
+                self.available_themes = self.theme_engine.list_available_themes()
+                self.settings["omarchy_theme_name"] = new_slug
                 self.view_mode = "main"
                 self.section_items = self._init_section_items()
                 self.current_section_idx = self._prev_main_section_idx
                 self.selected_item_idx = 0
                 self.content_scroll_offset = 0
-                self.status_message = f"✓ {msg}"
+                self.active_pane = "content"
+                self.status_message = msg
             else:
                 self.status_message = f"Error: {msg}"
             return
@@ -2939,7 +2904,7 @@ class MecaTUI:
 
         if self.settings.get("omarchy_theme_name") != self.saved_settings.get("omarchy_theme_name"):
             chosen_theme = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
-            self.status_message = f"Activando tema Omarchy '{chosen_theme}'..."
+            self.status_message = f"Activando tema '{chosen_theme}'..."
             self.render()
             self.theme_engine.set_theme(chosen_theme)
             self._sync_theme_into_settings()
@@ -2947,10 +2912,10 @@ class MecaTUI:
 
         if ok_gui and ok_auto:
             self.saved_settings = dict(self.settings)
-            self.saved_autostart = [dict(x) for x in self.autostart_items]
-            self.status_message = "✓ Cambios aplicados en Hyprland, Barra Superior y Omarchy."
+            self.saved_autostart = [dict(x) for x in self.saved_autostart]
+            self.status_message = "✓ Cambios aplicados."
         else:
-            self.status_message = "Error al aplicar la configuracion."
+            self.status_message = "Error al aplicar configuracion."
 
     def cancel_changes(self) -> None:
         """
@@ -2962,7 +2927,8 @@ class MecaTUI:
             self.current_section_idx = self._prev_main_section_idx
             self.selected_item_idx = 0
             self.content_scroll_offset = 0
-            self.status_message = "Creacion de tema cancelada."
+            self.active_pane = "content"
+            self.status_message = "Creacion cancelada."
             return
 
         self.settings = dict(self.saved_settings)
