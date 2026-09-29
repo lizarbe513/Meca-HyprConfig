@@ -283,6 +283,7 @@ class ThemeEngine:
             "foreground": "#a9b1d6",
             "selection": "#292e42",
             "icons": "Adwaita",
+            "icon_theme": "Adwaita",
             "is_user": is_user,
             "is_system": is_system,
         }
@@ -304,23 +305,237 @@ class ThemeEngine:
                     ic = i_file.read_text(encoding="utf-8").strip()
                     if ic:
                         info["icons"] = ic
+                        info["icon_theme"] = ic
                 except Exception:
                     pass
         return info
 
-    def create_theme(
+    def get_theme_full_spec(self, theme_name: str) -> Dict[str, Any]:
+        """
+        Analiza el directorio de un tema Omarchy integrado o de usuario y devuelve todos sus
+        aspectos configurables: modo, color de acento, bordes de ventana enfocada/inactiva,
+        fondo de widgets, tema de iconos, fondos de pantalla, preview, colores de terminal y extras.
+        """
+        slug = self.normalize_theme_slug(theme_name)
+        t_dir = self._find_theme_dir(slug) or (self.system_themes_dir / "tokyo-night")
+
+        spec: Dict[str, Any] = {
+            "name": f"{slug}-custom",
+            "base_theme": slug,
+            "mode": "dark",
+            "accent": "#7aa2f7",
+            "active_border": "#7aa2f7",
+            "inactive_border": "#414868",
+            "selection": "#292e42",
+            "muted": "#414868",
+            "widget_bg": "#1a1b26",
+            "widget_fg": "#a9b1d6",
+            "widget_border": "#7aa2f7",
+            "widget_alpha": 0.95,
+            "icons": "Yaru-blue",
+            "wallpapers_source": f"tema:{slug}",
+            "custom_wallpaper": "ninguno",
+            "preview_source": f"tema:{slug}",
+            # Terminal colors
+            "background": "#1a1b26",
+            "dark_background": "#13141c",
+            "darker_background": "#0e0e14",
+            "lighter_background": "#24283b",
+            "foreground": "#a9b1d6",
+            "dark_foreground": "#565f89",
+            "light_foreground": "#b4bee6",
+            "bright_foreground": "#c0caf5",
+            "red": "#f7768e",
+            "yellow": "#e0af68",
+            "orange": "#eb927b",
+            "green": "#9ece6a",
+            "cyan": "#449dab",
+            "blue": "#7aa2f7",
+            "magenta": "#ad8ee6",
+            "brown": "#75493d",
+            "bright_red": "#ff7a93",
+            "bright_yellow": "#ff9e64",
+            "bright_green": "#b9f27c",
+            "bright_cyan": "#0db9d7",
+            "bright_blue": "#7da6ff",
+            "bright_magenta": "#bb9af7",
+            # Extras
+            "neovim_scheme": "tokyonight-night",
+            "keyboard_rgb": "7aa2f7",
+            "activate_on_create": True,
+        }
+
+        if not t_dir or not t_dir.exists():
+            return spec
+
+        # 1. Leer colors.toml
+        c_file = t_dir / "colors.toml"
+        if c_file.exists():
+            try:
+                with open(c_file, "rb") as f:
+                    data = tomllib.load(f)
+                for k in (
+                    "mode", "accent", "selection", "muted",
+                    "background", "dark_background", "darker_background", "lighter_background",
+                    "foreground", "dark_foreground", "light_foreground", "bright_foreground",
+                    "red", "yellow", "orange", "green", "cyan", "blue", "magenta", "brown",
+                    "bright_red", "bright_yellow", "bright_green", "bright_cyan", "bright_blue", "bright_magenta",
+                ):
+                    if k in data and isinstance(data[k], str):
+                        spec[k] = data[k]
+                # Bordes si están definidos en colors.toml
+                if "hyprland_active_border" in data and isinstance(data["hyprland_active_border"], str):
+                    val = data["hyprland_active_border"]
+                    m_hex = re.search(r"#([0-9a-fA-F]{6})", val)
+                    m_rgb = re.search(r"rgba?\(([0-9a-fA-F]{6})", val)
+                    if m_hex:
+                        spec["active_border"] = f"#{m_hex.group(1)}"
+                    elif m_rgb:
+                        spec["active_border"] = f"#{m_rgb.group(1)}"
+                elif "active_border_color" in data and isinstance(data["active_border_color"], str):
+                    spec["active_border"] = data["active_border_color"]
+                else:
+                    spec["active_border"] = spec["accent"]
+
+                if "hyprland_inactive_border" in data and isinstance(data["hyprland_inactive_border"], str):
+                    val = data["hyprland_inactive_border"]
+                    m_hex = re.search(r"#([0-9a-fA-F]{6})", val)
+                    m_rgb = re.search(r"rgba?\(([0-9a-fA-F]{6})", val)
+                    if m_hex:
+                        spec["inactive_border"] = f"#{m_hex.group(1)}"
+                    elif m_rgb:
+                        spec["inactive_border"] = f"#{m_rgb.group(1)}"
+                else:
+                    spec["inactive_border"] = spec["muted"]
+            except Exception:
+                pass
+
+        # 2. Leer hyprland.lua si existe para bordes específicos
+        h_file = t_dir / "hyprland.lua"
+        if h_file.exists():
+            try:
+                htxt = h_file.read_text(encoding="utf-8")
+                m_act = re.search(r"active_border_color\s*=\s*.*?([0-9a-fA-F]{6})", htxt)
+                if m_act:
+                    spec["active_border"] = f"#{m_act.group(1)}"
+                m_inact = re.search(r"inactive_border_color\s*=\s*.*?([0-9a-fA-F]{6})", htxt)
+                if m_inact:
+                    spec["inactive_border"] = f"#{m_inact.group(1)}"
+            except Exception:
+                pass
+
+        # Inicializar colores de widgets a partir de background/foreground/active_border
+        spec["widget_bg"] = spec["background"]
+        spec["widget_fg"] = spec["foreground"]
+        spec["widget_border"] = spec["active_border"]
+
+        # 3. Leer shell.bar.toml / shell.toml / shell.launcher.toml para widgets
+        for s_name in ("shell.bar.toml", "shell.toml", "shell.launcher.toml"):
+            s_file = t_dir / s_name
+            if s_file.exists():
+                try:
+                    with open(s_file, "rb") as f:
+                        s_data = tomllib.load(f)
+                    sec = s_data.get("bar") or s_data.get("launcher") or s_data.get("menu") or {}
+                    if isinstance(sec, dict):
+                        if isinstance(sec.get("background"), str) and sec["background"].startswith("#"):
+                            spec["widget_bg"] = sec["background"]
+                        if isinstance(sec.get("text"), str) and sec["text"].startswith("#"):
+                            spec["widget_fg"] = sec["text"]
+                        if isinstance(sec.get("border"), str) and sec["border"].startswith("#"):
+                            spec["widget_border"] = sec["border"]
+                        if isinstance(sec.get("background-alpha"), (int, float)):
+                            spec["widget_alpha"] = float(sec["background-alpha"])
+                    break
+                except Exception:
+                    pass
+
+        # 4. Leer icons.theme
+        i_file = t_dir / "icons.theme"
+        if i_file.exists():
+            try:
+                ic = i_file.read_text(encoding="utf-8").strip()
+                if ic:
+                    spec["icons"] = ic
+            except Exception:
+                pass
+
+        # 5. Leer neovim.lua y keyboard.rgb
+        nv_file = t_dir / "neovim.lua"
+        if nv_file.exists():
+            try:
+                nv_txt = nv_file.read_text(encoding="utf-8")
+                m_cs = re.search(r'colorscheme\s*=\s*"([^"]+)"', nv_txt)
+                if m_cs:
+                    spec["neovim_scheme"] = m_cs.group(1)
+            except Exception:
+                pass
+
+        kb_file = t_dir / "keyboard.rgb"
+        if kb_file.exists():
+            try:
+                kb_txt = kb_file.read_text(encoding="utf-8").strip().lstrip("#")
+                if kb_txt:
+                    spec["keyboard_rgb"] = kb_txt[:6]
+            except Exception:
+                pass
+        else:
+            spec["keyboard_rgb"] = spec["accent"].lstrip("#")[:6]
+
+        return spec
+
+    def list_wallpaper_options(self) -> List[str]:
+        """Lista orígenes de fondos de pantalla (de cada tema y carpetas del usuario)."""
+        opts: List[str] = []
+        for t in self.list_available_themes():
+            opts.append(f"tema:{t}")
+        for u_dir in [
+            Path.home() / "Pictures" / "Wallpapers",
+            Path.home() / "Pictures",
+            Path.home() / "Imágenes",
+            Path.home() / ".local" / "share" / "omarchy" / "backgrounds",
+        ]:
+            if u_dir.exists() and u_dir.is_dir():
+                opts.append(str(u_dir))
+        return opts
+
+    def list_custom_wallpaper_files(self) -> List[str]:
+        """Lista archivos de imagen disponibles en temas y carpetas de usuario para elegir fondos o previews."""
+        files: List[str] = ["ninguno"]
+        search_roots = [
+            Path.home() / "Pictures" / "Wallpapers",
+            Path.home() / "Pictures",
+            Path.home() / "Imágenes",
+        ]
+        for root in search_roots:
+            if root.exists() and root.is_dir():
+                for f in sorted(root.iterdir()):
+                    if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                        files.append(str(f))
+                        if len(files) >= 25:
+                            break
+        # También incluir algunos fondos destacados de los temas instalados
+        for t in self.list_available_themes():
+            t_dir = self._find_theme_dir(t)
+            if t_dir and (t_dir / "backgrounds").exists():
+                for f in sorted((t_dir / "backgrounds").iterdir()):
+                    if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                        files.append(f"{t}/backgrounds/{f.name}")
+                        break
+        return files[:40]
+
+    def create_theme_from_spec(
         self,
-        new_name: str,
-        base_theme: Optional[str] = None,
-        mode: str = "dark",
-        custom_colors: Optional[Dict[str, str]] = None,
-        activate: bool = True,
+        spec: Dict[str, Any],
+        activate: bool = False,
     ) -> tuple[bool, str]:
         """
-        Crea un nuevo tema Omarchy en ~/.config/omarchy/themes/<slug> clonando la estructura
-        y fondos del tema base indicado y aplicando el modo y paleta personalizados.
+        Crea un nuevo tema Omarchy completo en ~/.config/omarchy/themes/<slug> (y en /usr/share/omarchy/themes)
+        escribiendo colors.toml, hyprland.lua (bordes activo/inactivo), shell.*.toml (fondo y borde de widgets),
+        icons.theme, backgrounds/, preview.png, neovim.lua y keyboard.rgb.
         """
-        slug = re.sub(r"[^a-z0-9\-_]", "", self.normalize_theme_slug(new_name))
+        raw_name = str(spec.get("name", "")).strip()
+        slug = re.sub(r"[^a-z0-9\-_]", "", self.normalize_theme_slug(raw_name))
         if not slug:
             return False, "Nombre de tema invalido. Usa letras, numeros o guiones."
 
@@ -328,7 +543,7 @@ class ThemeEngine:
         if dest_dir.exists():
             return False, f"El tema '{slug}' ya existe en ~/.config/omarchy/themes."
 
-        base_slug = self.normalize_theme_slug(base_theme or self.current_theme)
+        base_slug = self.normalize_theme_slug(str(spec.get("base_theme", self.current_theme)))
         base_dir = self._find_theme_dir(base_slug)
         if not base_dir or not base_dir.exists():
             base_dir = self.system_themes_dir / "tokyo-night"
@@ -340,24 +555,214 @@ class ThemeEngine:
             else:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 (dest_dir / "backgrounds").mkdir(exist_ok=True)
-                (dest_dir / "icons.theme").write_text("Yaru-blue\n", encoding="utf-8")
-                (dest_dir / "colors.toml").write_text(
-                    'mode = "dark"\naccent = "#7aa2f7"\nselection = "#292e42"\nmuted = "#414868"\n'
-                    'background = "#1a1b26"\nforeground = "#a9b1d6"\nbright_foreground = "#c0caf5"\n',
-                    encoding="utf-8",
-                )
 
-            updates = {"mode": mode}
-            if custom_colors:
-                updates.update(custom_colors)
+            # 1. Fondos de pantalla (backgrounds/)
+            bg_dest = dest_dir / "backgrounds"
+            bg_dest.mkdir(exist_ok=True)
+            wp_source = str(spec.get("wallpapers_source", f"tema:{base_slug}"))
+            if wp_source.startswith("tema:"):
+                src_theme = wp_source.split(":", 1)[1]
+                src_t_dir = self._find_theme_dir(src_theme)
+                if src_t_dir and (src_t_dir / "backgrounds").exists() and src_t_dir != base_dir:
+                    for old_f in bg_dest.iterdir():
+                        if old_f.is_file():
+                            old_f.unlink()
+                    for img in (src_t_dir / "backgrounds").iterdir():
+                        if img.is_file():
+                            shutil.copy2(img, bg_dest / img.name)
+            else:
+                custom_dir = Path(wp_source).expanduser()
+                if custom_dir.exists() and custom_dir.is_dir():
+                    imgs = [p for p in sorted(custom_dir.iterdir()) if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+                    if imgs:
+                        for old_f in bg_dest.iterdir():
+                            if old_f.is_file():
+                                old_f.unlink()
+                        for img in imgs[:10]:
+                            shutil.copy2(img, bg_dest / img.name)
 
-            self.save_theme_edits(
-                theme_name=slug,
-                updates=updates,
-                refresh_live=False,
-            )
+            # Si seleccionó un archivo de fondo adicional específico
+            custom_wp = str(spec.get("custom_wallpaper", "ninguno"))
+            if custom_wp and custom_wp != "ninguno":
+                if "/" in custom_wp and not custom_wp.startswith("/"):
+                    # Formato "<tema>/backgrounds/<archivo>"
+                    parts = custom_wp.split("/", 2)
+                    t_src = self._find_theme_dir(parts[0])
+                    if t_src and len(parts) == 3:
+                        cand = t_src / parts[1] / parts[2]
+                        if cand.exists():
+                            shutil.copy2(cand, bg_dest / f"00-{cand.name}")
+                else:
+                    cand = Path(custom_wp).expanduser()
+                    if cand.exists() and cand.is_file():
+                        shutil.copy2(cand, bg_dest / f"00-{cand.name}")
 
-            # Si /usr/share/omarchy/themes existe, intentar copiar también al directorio del sistema
+            # 2. Preview del tema (preview.png y unlock.png)
+            prev_source = str(spec.get("preview_source", f"tema:{base_slug}"))
+            if prev_source.startswith("tema:"):
+                p_theme = prev_source.split(":", 1)[1]
+                p_dir = self._find_theme_dir(p_theme)
+                if p_dir:
+                    for p_name in ("preview.png", "preview-unlock.png", "unlock.png"):
+                        if (p_dir / p_name).exists():
+                            shutil.copy2(p_dir / p_name, dest_dir / p_name)
+            elif prev_source == "usar_fondo":
+                bg_imgs = sorted([p for p in bg_dest.iterdir() if p.is_file()])
+                if bg_imgs:
+                    shutil.copy2(bg_imgs[0], dest_dir / "preview.png")
+                    shutil.copy2(bg_imgs[0], dest_dir / "unlock.png")
+            else:
+                p_path = Path(prev_source).expanduser()
+                if p_path.exists() and p_path.is_file():
+                    shutil.copy2(p_path, dest_dir / "preview.png")
+
+            # 3. Escribir colors.toml completo (modo, acento, bordes, selección y paleta de terminal)
+            mode = str(spec.get("mode", "dark"))
+            accent = str(spec.get("accent", "#7aa2f7"))
+            act_border = str(spec.get("active_border", accent))
+            inact_border = str(spec.get("inactive_border", "#414868"))
+            selection = str(spec.get("selection", "#292e42"))
+            muted = str(spec.get("muted", "#414868"))
+            bg = str(spec.get("background", "#1a1b26"))
+            fg = str(spec.get("foreground", "#a9b1d6"))
+            bright_fg = str(spec.get("bright_foreground", "#ffffff"))
+            dark_bg = str(spec.get("dark_background", self.blend_hex(bg, "#000000", 0.25)))
+            darker_bg = str(spec.get("darker_background", self.blend_hex(bg, "#000000", 0.50)))
+            lighter_bg = str(spec.get("lighter_background", self.blend_hex(bg, "#ffffff", 0.08)))
+            dark_fg = str(spec.get("dark_foreground", muted))
+            light_fg = str(spec.get("light_foreground", fg))
+
+            colors_toml_content = f'''mode = "{mode}"
+
+accent = "{accent}"
+selection = "{selection}"
+muted = "{muted}"
+
+background = "{bg}"
+dark_background = "{dark_bg}"
+darker_background = "{darker_bg}"
+lighter_background = "{lighter_bg}"
+
+foreground = "{fg}"
+dark_foreground = "{dark_fg}"
+light_foreground = "{light_fg}"
+bright_foreground = "{bright_fg}"
+
+hyprland_active_border = "{act_border}"
+hyprland_inactive_border = "{inact_border}"
+active_border_color = "{act_border}"
+
+red = "{spec.get("red", "#f7768e")}"
+yellow = "{spec.get("yellow", "#e0af68")}"
+orange = "{spec.get("orange", "#eb927b")}"
+green = "{spec.get("green", "#9ece6a")}"
+cyan = "{spec.get("cyan", "#449dab")}"
+blue = "{spec.get("blue", "#7aa2f7")}"
+magenta = "{spec.get("magenta", "#ad8ee6")}"
+brown = "{spec.get("brown", "#75493d")}"
+
+bright_red = "{spec.get("bright_red", "#ff7a93")}"
+bright_yellow = "{spec.get("bright_yellow", "#ff9e64")}"
+bright_green = "{spec.get("bright_green", "#b9f27c")}"
+bright_cyan = "{spec.get("bright_cyan", "#0db9d7")}"
+bright_blue = "{spec.get("bright_blue", "#7da6ff")}"
+bright_magenta = "{spec.get("bright_magenta", "#bb9af7")}"
+'''
+            (dest_dir / "colors.toml").write_text(colors_toml_content, encoding="utf-8")
+
+            # 4. Escribir hyprland.lua con los colores de bordes de ventana enfocada e inactiva
+            hyprland_lua_content = f'''local active_border_color = "{act_border}"
+local inactive_border_color = "{inact_border}"
+
+hl.config({{
+  general = {{
+    col = {{
+      active_border = active_border_color,
+      inactive_border = inactive_border_color,
+    }},
+  }},
+
+  group = {{
+    col = {{
+      border_active = active_border_color,
+      border_inactive = inactive_border_color,
+    }},
+  }},
+}})
+'''
+            (dest_dir / "hyprland.lua").write_text(hyprland_lua_content, encoding="utf-8")
+
+            # 5. Escribir configuración de fondo y bordes de widgets (shell.toml, shell.bar.toml, shell.launcher.toml, shell.menu.toml)
+            w_bg = str(spec.get("widget_bg", bg))
+            w_fg = str(spec.get("widget_fg", fg))
+            w_border = str(spec.get("widget_border", act_border))
+            w_alpha = float(spec.get("widget_alpha", 0.95))
+
+            shell_bar_content = f'''[bar]
+background       = "{w_bg}"
+background-alpha = {w_alpha:.2f}
+text             = "{w_fg}"
+active           = "{accent}"
+scale-with-font  = true
+size-horizontal  = 26
+size-vertical    = 28
+'''
+            (dest_dir / "shell.bar.toml").write_text(shell_bar_content, encoding="utf-8")
+
+            shell_launcher_content = f'''[launcher]
+background                = "{w_bg}"
+background-alpha          = {w_alpha:.2f}
+text                      = "{w_fg}"
+border                    = "{w_border}"
+border-alpha              = 1.0
+scrim                     = "{bg}"
+scrim-alpha               = 0.5
+selected-background       = "{accent}"
+selected-background-alpha = 0.15
+selected-text             = "{bright_fg}"
+selected-border           = "{w_border}"
+selected-border-alpha     = 0.25
+'''
+            (dest_dir / "shell.launcher.toml").write_text(shell_launcher_content, encoding="utf-8")
+
+            shell_menu_content = f'''[menu]
+background                = "{w_bg}"
+background-alpha          = {w_alpha:.2f}
+text                      = "{w_fg}"
+border                    = "{w_border}"
+border-alpha              = 1.0
+scrim                     = "{bg}"
+scrim-alpha               = 0.5
+selected-background       = "{accent}"
+selected-background-alpha = 0.15
+selected-text             = "{bright_fg}"
+selected-border           = "{w_border}"
+selected-border-alpha     = 0.25
+'''
+            (dest_dir / "shell.menu.toml").write_text(shell_menu_content, encoding="utf-8")
+
+            # 6. Escribir icons.theme, neovim.lua y keyboard.rgb
+            icons_name = str(spec.get("icons", "Yaru-blue")).strip()
+            (dest_dir / "icons.theme").write_text(f"{icons_name}\n", encoding="utf-8")
+
+            nv_scheme = str(spec.get("neovim_scheme", "tokyonight-night")).strip()
+            if nv_scheme:
+                nv_content = f'''return {{
+  {{
+    "LazyVim/LazyVim",
+    opts = {{
+      colorscheme = "{nv_scheme}",
+    }},
+  }},
+}}
+'''
+                (dest_dir / "neovim.lua").write_text(nv_content, encoding="utf-8")
+
+            kb_rgb = str(spec.get("keyboard_rgb", accent.lstrip("#"))).strip().lstrip("#")[:6]
+            if kb_rgb:
+                (dest_dir / "keyboard.rgb").write_text(f"{kb_rgb}\n", encoding="utf-8")
+
+            # 7. Si /usr/share/omarchy/themes existe, sincronizar copia en el directorio del sistema
             sys_dest = self.system_themes_dir / slug
             if self.system_themes_dir.exists() and not sys_dest.exists():
                 if os.access(self.system_themes_dir, os.W_OK):
@@ -377,9 +782,25 @@ class ThemeEngine:
 
             if activate:
                 self.set_theme(slug)
-            return True, f"✓ Tema Omarchy '{slug}' creado a partir de '{base_slug}'."
+            return True, f"✓ Tema Omarchy '{slug}' creado con todos sus componentes."
         except Exception as e:
             return False, f"Error al crear el tema: {e}"
+
+    def create_theme(
+        self,
+        new_name: str,
+        base_theme: Optional[str] = None,
+        mode: str = "dark",
+        custom_colors: Optional[Dict[str, str]] = None,
+        activate: bool = True,
+    ) -> tuple[bool, str]:
+        """Wrapper compatible que crea un tema a partir de una plantilla base."""
+        spec = self.get_theme_full_spec(base_theme or self.current_theme)
+        spec["name"] = new_name
+        spec["mode"] = mode
+        if custom_colors:
+            spec.update(custom_colors)
+        return self.create_theme_from_spec(spec, activate=activate)
 
     def delete_user_theme(self, theme_name: str) -> tuple[bool, str]:
         """Elimina un tema personalizado de ~/.config/omarchy/themes/<slug>."""

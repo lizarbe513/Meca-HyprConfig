@@ -67,7 +67,27 @@ class MecaTUI:
         ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Aplicaciones, servicios o comandos al iniciar sesión"),
         ("STARTUP & EXTRAS", "bar", "󰍜", "Barra Superior", "Posición, transparencia, reloj y widgets de la barra Omarchy"),
         ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Crear nuevos temas Omarchy y gestionar los ya creados"),
-        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondos, luz nocturna, Setup Lizarbe y utilidades del sistema"),
+        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondos de pantalla, barra superior y luz nocturna de Omarchy"),
+    ]
+
+    # Categorías de la ventana dedicada de Creación de Temas Omarchy
+    CREATOR_SECTIONS = [
+        ("CREAR TEMA OMARCHY", "creator_identity", "󰏘", "Identidad y Modo", "Nombre del tema, plantilla base, modo claro/oscuro e iconos"),
+        ("CREAR TEMA OMARCHY", "creator_borders", "", "Bordes y Acento", "Color de acento y bordes de ventana enfocada y fuera de enfoque"),
+        ("CREAR TEMA OMARCHY", "creator_widgets", "󰍜", "Fondo de Widgets", "Color de fondo, texto, borde y opacidad de barra, menu y lanzador"),
+        ("CREAR TEMA OMARCHY", "creator_media", "󰸉", "Fondos y Preview", "Fondos de pantalla del tema (backgrounds/) e imagen preview.png"),
+        ("CREAR TEMA OMARCHY", "creator_terminal", "", "Colores Terminal", "Colores de fondo, texto y paleta ANSI 16 en la terminal"),
+        ("CREAR TEMA OMARCHY", "creator_extras", "", "Extras del Tema", "Esquema Neovim, iluminacion RGB de teclado y activacion"),
+    ]
+
+    # Paleta curada de colores Hex para selección rápida con previsualización
+    CURATED_HEX_PALETTE = [
+        "#E31B23", "#7aa2f7", "#89b4fa", "#1e66f5", "#2DB872", "#9ece6a",
+        "#E5A83B", "#e0af68", "#f38ba8", "#f7768e", "#ad8ee6", "#cba6f7",
+        "#45A0B5", "#94e2d5", "#8bc9eb", "#eb927b", "#08080B", "#1a1b26",
+        "#1e1e2e", "#101315", "#16242d", "#1f1d24", "#24283b", "#292e42",
+        "#313244", "#414868", "#45475a", "#585b70", "#d8d8d8", "#a9b1d6",
+        "#cdd6f4", "#ececec", "#ffffff", "#eff1f5", "#000000", "#1c1c1c",
     ]
 
     def __init__(self):
@@ -76,12 +96,17 @@ class MecaTUI:
         self.running = True
         self._frame_count = 0
 
+        # Modo de ventana activa: "main" (panel principal) | "theme_creator" (ventana de creación de temas)
+        self.view_mode: str = "main"
+        self._prev_main_section_idx: int = 12
+        self.theme_creator_spec: Dict[str, Any] = self.theme_engine.get_theme_full_spec(self.theme_engine.current_theme)
+
         # Navegación de paneles: "sidebar" (izquierda), "content" (derecha) o "buttons" (barra inferior)
         self.active_pane = "sidebar"
         self.current_section_idx = 0
         self.selected_item_idx = 0
         self.content_scroll_offset = 0
-        self.status_message = "Listo. Usa el raton o las flechas para configurar Hyprland y Omarchy."
+        self.status_message = "Listo. Los cambios se aplican al pulsar el boton 'Aplicar'."
 
         # Datos cargados del sistema
         self.settings = self.config_sync.load_gui_settings()
@@ -90,7 +115,10 @@ class MecaTUI:
         self.autostart_items = self.config_sync.load_autostart_items()
         self.installed_apps = self.config_sync.list_installed_applications()
 
-        # Sincronizar propiedades del tema Omarchy activo dentro de settings para edición
+        # Aplicar correcciones silenciosas de fondo (hook de actualización y logo fastfetch) sin ensuciar el panel
+        self._ensure_background_fixes()
+
+        # Sincronizar propiedades del tema Omarchy activo dentro de settings
         self._sync_theme_into_settings()
         self._sync_autostart_into_settings()
 
@@ -116,7 +144,7 @@ class MecaTUI:
         self._dropdown_box_bounds: Tuple[int, int, int, int] = (0, 0, 0, 0)  # (y1, y2, x1, x2)
 
         # Estado de ventana modal:
-        # None | "confirm_section_change" | "confirm_reset" | "input_autostart" | "input_theme_hex" | "create_theme"
+        # None | "confirm_section_change" | "confirm_reset" | "input_autostart" | "input_theme_hex" | "input_creator_text"
         self.modal_state: Optional[str] = None
         self.modal_selected_idx: int = 0
         self.pending_section_idx: Optional[int] = None
@@ -127,7 +155,8 @@ class MecaTUI:
         # Estado de entrada de texto y selectores para modales interactivos
         self.modal_input_text: str = ""
         self.modal_input_kind: str = "launch"  # "launch" (App/Servicio) | "exec" (Comando)
-        self.modal_hex_target: str = "accent"  # "accent" | "background" | "foreground" | "selection"
+        self.modal_hex_target: str = "creator:accent"
+        self.modal_text_target: str = "creator:name"
         self.modal_base_theme: str = self.theme_engine.current_theme
         self.modal_theme_mode: str = "dark"
         self._modal_kind_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
@@ -148,7 +177,7 @@ class MecaTUI:
         self._content_click_map: Dict[int, Dict[str, Any]] = {}
         self._button_click_map: Dict[str, Tuple[int, int]] = {}
         self._button_row_range: Tuple[int, int] = (0, 0)
-        self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar, 2: Aplicar
+        self.selected_button_idx = 2  # 0: Restablecer, 1: Cancelar/Volver, 2: Aplicar/Crear
         self.hover_sidebar_idx: Optional[int] = None
         self.hover_item_idx: Optional[int] = None
         self.hover_subcontrol: Optional[str] = None
@@ -157,6 +186,18 @@ class MecaTUI:
 
         # Inicializar definiciones de variables por sección
         self.section_items = self._init_section_items()
+
+    def _ensure_background_fixes(self) -> None:
+        """Aplica correcciones silenciosas (hook de actualización y logo fastfetch) sin botones en el panel."""
+        try:
+            self.install_update_hook()
+            LizarbeManager.ensure_fastfetch_logo()
+        except Exception:
+            pass
+
+    def _get_active_sections(self) -> List[Tuple[str, str, str, str, str]]:
+        """Devuelve la lista de secciones según la ventana activa ('main' o 'theme_creator')."""
+        return self.CREATOR_SECTIONS if self.view_mode == "theme_creator" else self.SECTIONS
 
     def _sync_theme_into_settings(self) -> None:
         """Sincroniza los colores, modo e iconos del tema Omarchy activo hacia self.settings."""
@@ -200,7 +241,7 @@ class MecaTUI:
     def _build_bar_section_items(self) -> List[SectionItem]:
         """Construye los controles de la pestaña Barra Superior de Omarchy (~/.config/omarchy/shell.json)."""
         items = [
-            SectionItem("bar:visible", "Mostrar barra superior", "Muestra u oculta la barra superior de Omarchy en vivo", "toggle"),
+            SectionItem("bar:visible", "Mostrar barra superior", "Muestra u oculta la barra superior de Omarchy", "toggle"),
             SectionItem("bar:position", "Posicion de la barra", "Borde de la pantalla donde se ubica la barra", "select", options=["top", "bottom", "left", "right"]),
             SectionItem("bar:transparent", "Fondo transparente", "Hace transparente la superficie de la barra superior", "toggle"),
             SectionItem("bar:center_anchor", "Widget ancla central", "Widget que permanece centrado en la barra", "select", options=["omarchy.clock", "omarchy.workspaces", "none"]),
@@ -241,57 +282,130 @@ class MecaTUI:
             )
         return items
 
+    def _color_options_for(self, current_hex: str) -> List[str]:
+        """Construye la lista de opciones de un selector de color con previsualización y entrada #Hex."""
+        base = [str(current_hex), "Escribir #Hex..."]
+        for c in self.CURATED_HEX_PALETTE:
+            if c not in base:
+                base.append(c)
+        return base
+
+    def _build_creator_section_items(self, sec_id: str) -> List[SectionItem]:
+        """Construye los controles de cada categoría en la ventana dedicada de Creación de Temas Omarchy."""
+        spec = self.theme_creator_spec
+        themes = self.available_themes if self.available_themes else ["tokyo-night", "lizarbe", "catppuccin", "rose-pine"]
+
+        if sec_id == "creator_identity":
+            icon_opts = list(dict.fromkeys([
+                str(spec.get("icons", "Yaru-blue")),
+                "Yaru-red", "Yaru-blue", "Yaru-purple", "Yaru-sage", "Yaru-olive",
+                "Yaru-magenta", "Papirus-Dark", "Papirus-Light", "Adwaita", "Lizarbe-Red",
+            ]))
+            return [
+                SectionItem("creator:name", "Nombre del nuevo tema", "Haz clic o pulsa Enter para escribir el identificador del tema", "action"),
+                SectionItem("creator:base_theme", "Plantilla base del sistema", "Carga estructura, fondos y paleta inicial desde este tema", "select", options=themes),
+                SectionItem("creator:mode", "Modo del tema (Claro / Oscuro)", "Define 'mode' en colors.toml para aplicaciones GTK y shell", "select", options=["dark", "light"]),
+                SectionItem("creator:icons", "Tema de iconos (icons.theme)", "Paquete de iconos GTK asociado al tema Omarchy", "select", options=icon_opts),
+                SectionItem("creator:activate_on_create", "Activar tema al crearlo", "Aplica inmediatamente el nuevo tema tras pulsar 'Crear Tema'", "toggle"),
+            ]
+
+        if sec_id == "creator_borders":
+            return [
+                SectionItem("creator:accent", "Color de acento (accent)", "Color principal de resaltado en Omarchy y shell", "select", options=self._color_options_for(spec.get("accent", "#7aa2f7"))),
+                SectionItem("creator:active_border", "Borde de ventana enfocada", "Color general.col.active_border en hyprland.lua y colors.toml", "select", options=self._color_options_for(spec.get("active_border", "#7aa2f7"))),
+                SectionItem("creator:inactive_border", "Borde de ventana fuera de enfoque", "Color general.col.inactive_border en hyprland.lua y colors.toml", "select", options=self._color_options_for(spec.get("inactive_border", "#414868"))),
+                SectionItem("creator:selection", "Color de seleccion (selection)", "Color de bloques seleccionados en menús y terminal", "select", options=self._color_options_for(spec.get("selection", "#292e42"))),
+                SectionItem("creator:muted", "Color secundario / apagado (muted)", "Tono para bordes secundarios, separadores y texto tenue", "select", options=self._color_options_for(spec.get("muted", "#414868"))),
+            ]
+
+        if sec_id == "creator_widgets":
+            return [
+                SectionItem("creator:widget_bg", "Color de fondo de los widgets", "Superficie de barra superior, lanzador y menús (shell.*.toml)", "select", options=self._color_options_for(spec.get("widget_bg", "#1a1b26"))),
+                SectionItem("creator:widget_fg", "Color de texto de los widgets", "Color de fuente en barra superior, notificaciones y menús", "select", options=self._color_options_for(spec.get("widget_fg", "#a9b1d6"))),
+                SectionItem("creator:widget_border", "Color de borde de los widgets", "Borde de tarjetas del lanzador, menús y OSD", "select", options=self._color_options_for(spec.get("widget_border", "#7aa2f7"))),
+                SectionItem("creator:widget_alpha", "Opacidad de fondo de widgets", "Transparencia background-alpha en shell.bar.toml y launcher", "slider", 0.10, 1.00, 0.05),
+            ]
+
+        if sec_id == "creator_media":
+            wp_sources = self.theme_engine.list_wallpaper_options()
+            cur_wp_src = str(spec.get("wallpapers_source", f"tema:{spec.get('base_theme', 'tokyo-night')}"))
+            if cur_wp_src not in wp_sources:
+                wp_sources.insert(0, cur_wp_src)
+            wp_sources.append("Escribir ruta...")
+
+            custom_wps = self.theme_engine.list_custom_wallpaper_files()
+            cur_cwp = str(spec.get("custom_wallpaper", "ninguno"))
+            if cur_cwp not in custom_wps:
+                custom_wps.insert(0, cur_cwp)
+            custom_wps.append("Escribir ruta...")
+
+            prev_opts = ["usar_fondo"] + [f"tema:{t}" for t in themes] + ["Escribir ruta..."]
+            cur_prev = str(spec.get("preview_source", f"tema:{spec.get('base_theme', 'tokyo-night')}"))
+            if cur_prev not in prev_opts:
+                prev_opts.insert(0, cur_prev)
+
+            return [
+                SectionItem("creator:wallpapers_source", "Coleccion de fondos (backgrounds/)", "Origen de los fondos de pantalla incluidos en el tema", "select", options=wp_sources),
+                SectionItem("creator:custom_wallpaper", "Fondo de pantalla adicional", "Agrega una imagen específica como fondo principal del tema", "select", options=custom_wps),
+                SectionItem("creator:preview_source", "Preview del tema (preview.png)", "Imagen de vista previa para el selector de temas y bloqueo", "select", options=prev_opts),
+            ]
+
+        if sec_id == "creator_terminal":
+            return [
+                SectionItem("creator:background", "Fondo de la terminal (background)", "Color principal de fondo en Alacritty/Kitty/Foot", "select", options=self._color_options_for(spec.get("background", "#1a1b26"))),
+                SectionItem("creator:dark_background", "Fondo oscuro secundario", "Color dark_background en colors.toml", "select", options=self._color_options_for(spec.get("dark_background", "#13141c"))),
+                SectionItem("creator:lighter_background", "Fondo elevado (lighter_background)", "Superficie para paneles y barras de estado en terminal", "select", options=self._color_options_for(spec.get("lighter_background", "#24283b"))),
+                SectionItem("creator:foreground", "Texto de la terminal (foreground)", "Color principal del texto en la terminal", "select", options=self._color_options_for(spec.get("foreground", "#a9b1d6"))),
+                SectionItem("creator:bright_foreground", "Texto brillante (bright_foreground)", "Color de texto resaltado y en negrita", "select", options=self._color_options_for(spec.get("bright_foreground", "#c0caf5"))),
+                SectionItem("creator:red", "Terminal Rojo (red)", "Color ANSI rojo normal", "select", options=self._color_options_for(spec.get("red", "#f7768e"))),
+                SectionItem("creator:green", "Terminal Verde (green)", "Color ANSI verde normal", "select", options=self._color_options_for(spec.get("green", "#9ece6a"))),
+                SectionItem("creator:yellow", "Terminal Amarillo (yellow)", "Color ANSI amarillo normal", "select", options=self._color_options_for(spec.get("yellow", "#e0af68"))),
+                SectionItem("creator:blue", "Terminal Azul (blue)", "Color ANSI azul normal", "select", options=self._color_options_for(spec.get("blue", "#7aa2f7"))),
+                SectionItem("creator:magenta", "Terminal Magenta (magenta)", "Color ANSI magenta normal", "select", options=self._color_options_for(spec.get("magenta", "#ad8ee6"))),
+                SectionItem("creator:cyan", "Terminal Cian (cyan)", "Color ANSI cian normal", "select", options=self._color_options_for(spec.get("cyan", "#449dab"))),
+                SectionItem("creator:orange", "Terminal Naranja (orange)", "Color complementario naranja", "select", options=self._color_options_for(spec.get("orange", "#eb927b"))),
+                SectionItem("creator:bright_red", "Terminal Rojo Brillante", "Color ANSI bright_red", "select", options=self._color_options_for(spec.get("bright_red", "#ff7a93"))),
+                SectionItem("creator:bright_green", "Terminal Verde Brillante", "Color ANSI bright_green", "select", options=self._color_options_for(spec.get("bright_green", "#b9f27c"))),
+                SectionItem("creator:bright_yellow", "Terminal Amarillo Brillante", "Color ANSI bright_yellow", "select", options=self._color_options_for(spec.get("bright_yellow", "#ff9e64"))),
+                SectionItem("creator:bright_blue", "Terminal Azul Brillante", "Color ANSI bright_blue", "select", options=self._color_options_for(spec.get("bright_blue", "#7da6ff"))),
+                SectionItem("creator:bright_magenta", "Terminal Magenta Brillante", "Color ANSI bright_magenta", "select", options=self._color_options_for(spec.get("bright_magenta", "#bb9af7"))),
+                SectionItem("creator:bright_cyan", "Terminal Cian Brillante", "Color ANSI bright_cyan", "select", options=self._color_options_for(spec.get("bright_cyan", "#0db9d7"))),
+            ]
+
+        # creator_extras
+        nv_opts = list(dict.fromkeys([
+            str(spec.get("neovim_scheme", "tokyonight-night")),
+            "tokyonight-night", "catppuccin", "kanagawa", "rose-pine", "nord", "habamax", "gruvbox",
+        ]))
+        kb_hex = "#" + str(spec.get("keyboard_rgb", "7aa2f7")).lstrip("#")[:6]
+        return [
+            SectionItem("creator:neovim_scheme", "Colorscheme de Neovim (neovim.lua)", "Esquema de colores configurado para LazyVim / Neovim", "select", options=nv_opts),
+            SectionItem("creator:keyboard_rgb", "Iluminacion RGB Teclado (keyboard.rgb)", "Color hexadecimal para teclados con soporte RGB en Omarchy", "select", options=self._color_options_for(kb_hex)),
+        ]
+
     def _build_themes_section_items(self) -> List[SectionItem]:
         """Construye dinámicamente los controles de la sección Temas Omarchy y las tarjetas de temas guardados."""
         self.available_themes = self.theme_engine.list_available_themes()
         themes = self.available_themes if self.available_themes else ["tokyo-night", "lizarbe", "catppuccin", "rose-pine"]
 
-        cur_accent = self.settings.get("omarchy_theme_accent", "#E31B23")
-        accent_opts = list(dict.fromkeys([cur_accent, "#7aa2f7", "#E31B23", "#89b4fa", "#1e66f5", "#2DB872", "#E5A83B", "#f38ba8", "#94e2d5"]))
-
-        cur_bg = self.settings.get("omarchy_theme_bg", "#08080B")
-        bg_opts = list(dict.fromkeys([cur_bg, "#1a1b26", "#08080B", "#1e1e2e", "#161622", "#101019", "#ffffff", "#eff1f5"]))
-
-        cur_fg = self.settings.get("omarchy_theme_fg", "#d8d8d8")
-        fg_opts = list(dict.fromkeys([cur_fg, "#a9b1d6", "#d8d8d8", "#cdd6f4", "#ffffff", "#000000", "#1a1a1a"]))
-
-        cur_sel = self.settings.get("omarchy_theme_sel", "#45475a")
-        sel_opts = list(dict.fromkeys([cur_sel, "#292e42", "#45475a", "#E31B23", "#c0c0c0", "#ccd0da", "#313244"]))
-
-        cur_icons = self.settings.get("omarchy_icons", "Adwaita")
-        icon_opts = list(dict.fromkeys([cur_icons, "Yaru-blue", "Yaru-red", "Yaru-purple", "Papirus-Dark", "Adwaita", "Lizarbe-Red"]))
-
         items = [
             SectionItem(
                 "action:create_theme",
                 "Crear nuevo tema Omarchy",
-                "Crea y registra un nuevo tema clonando estructura y fondos de una plantilla",
+                "Abre la ventana de creacion de temas para configurar bordes, widgets, fondos y terminal",
                 "action",
             ),
             SectionItem(
                 "action:clone_theme",
                 "Duplicar tema actual como nuevo",
-                f"Clona '{self.theme_engine.current_theme}' con otro nombre para personalizarlo",
+                f"Abre la ventana de creacion tomando '{self.theme_engine.current_theme}' como base",
                 "action",
             ),
-            SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Despliega la lista completa de temas para activar cualquiera", "select", options=themes),
-            SectionItem(
-                "header:edit_current_theme",
-                f"OPCIONES DE EDICION DEL TEMA ACTUAL ({self.theme_engine.current_theme.upper()})",
-                "Edita colores, modo e iconos del tema activo y su carpeta original",
-                "header",
-            ),
-            SectionItem("omarchy:theme_mode", "Modo del tema (dark / light)", "Edita el modo en el tema actual y en el original", "select", options=["dark", "light"]),
-            SectionItem("omarchy:theme_accent", "Color de acento (Accent)", "Edita el color de acento en el tema actual y original", "select", options=accent_opts),
-            SectionItem("omarchy:theme_bg", "Color de fondo (Background)", "Edita el color de fondo en el tema actual y original", "select", options=bg_opts),
-            SectionItem("omarchy:theme_fg", "Color de texto (Foreground)", "Edita el color de texto en el tema actual y original", "select", options=fg_opts),
-            SectionItem("omarchy:theme_sel", "Color de seleccion (Selection)", "Edita el color de seleccion en el tema actual y original", "select", options=sel_opts),
-            SectionItem("omarchy:icons", "Paquete de iconos (icons.theme)", "Edita el paquete de iconos del tema", "select", options=icon_opts),
-            SectionItem("action:custom_theme_hex", "Escribir color Hex personalizado", "Ingresa un codigo #RRGGBB exacto para editar el tema", "action"),
+            SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Selecciona un tema de la lista (pulsa Aplicar para activarlo)", "select", options=themes),
             SectionItem(
                 "header:saved_themes",
                 "TEMAS GUARDADOS EN EL SISTEMA",
-                "Tarjetas de temas personalizados en ~/.config/omarchy/themes (Clic/Enter: Activar │ Supr: Eliminar)",
+                "Selecciona un tema para resaltarlo y pulsa 'Aplicar' para activarlo (Supr: Eliminar)",
                 "header",
             ),
         ]
@@ -468,12 +582,10 @@ class MecaTUI:
             "bar": self._build_bar_section_items(),
             "themes": self._build_themes_section_items(),
             "omarchy": [
-                SectionItem("omarchy:theme", "Active Omarchy Theme", "Selecciona y aplica rápidamente el tema global de Omarchy", "select", options=themes),
+                SectionItem("omarchy:theme", "Active Omarchy Theme", "Selecciona un tema de Omarchy (pulsa Aplicar para activarlo)", "select", options=themes),
                 SectionItem("action:next_wallpaper", "Cambiar fondo de pantalla", "Alterna al siguiente wallpaper del tema Omarchy activo", "action"),
                 SectionItem("action:toggle_bar", "Alternar barra superior Omarchy", "Muestra u oculta la barra superior de Omarchy", "action"),
                 SectionItem("action:toggle_nightlight", "Alternar luz nocturna", "Activa o desactiva el filtro cálido hyprsunset", "action"),
-                SectionItem("action:apply_lizarbe_full", "Aplicar Setup Lizarbe", "Configura el tema Lizarbe, logo Fastfetch y Bloq Mayús", "action"),
-                SectionItem("action:install_hook", "Registrar hook en 'omarchy update'", "Mantiene Meca sincronizado al actualizar el sistema", "action"),
             ],
         }
 
@@ -519,6 +631,14 @@ class MecaTUI:
     # RENDERIZADO CON POSICIONAMIENTO EXACTO
     # ==========================
 
+    @staticmethod
+    def _extract_hex_color(text: str) -> Optional[str]:
+        """Extrae un código de color hexadecimal #RRGGBB si está presente en el texto."""
+        m = re.search(r"#([0-9a-fA-F]{6})\b", str(text))
+        if m:
+            return f"#{m.group(1)}"
+        return None
+
     def _get_sidebar_width(self, cols: int) -> int:
         return 22 if cols < 95 else 26
 
@@ -529,12 +649,19 @@ class MecaTUI:
         buf: List[str] = []
 
         # 1. Barra de Título Superior en fila exacta 1 (\033[1;1H)
-        ver = HyprIPC.get_version_info()
-        title_left = " MECA HyprConfig "
-        unsaved_badge = " *PENDIENTE* | " if self.has_unsaved_changes() else ""
-        title_right = f"{unsaved_badge}Hyprland {ver} | Tema: {self.theme_engine.current_theme} | q/Esc: Salir "
-        if len(title_left) + len(title_right) > cols:
-            title_right = f"Tema: {self.theme_engine.current_theme} | q/Esc: Salir "
+        if self.view_mode == "theme_creator":
+            t_name = self.theme_creator_spec.get("name", "nuevo-tema")
+            t_base = self.theme_creator_spec.get("base_theme", self.theme_engine.current_theme)
+            title_left = f" MECA Creacion de Tema: {t_name} "
+            title_right = f"Plantilla: {t_base} | Esc: Volver "
+        else:
+            ver = HyprIPC.get_version_info()
+            title_left = " MECA HyprConfig "
+            unsaved_badge = " *PENDIENTE* | " if self.has_unsaved_changes() else ""
+            title_right = f"{unsaved_badge}Hyprland {ver} | Tema: {self.theme_engine.current_theme} | q/Esc: Salir "
+            if len(title_left) + len(title_right) > cols:
+                title_right = f"{unsaved_badge}Tema: {self.theme_engine.current_theme} | q/Esc: Salir "
+
         space_len = max(0, cols - len(title_left) - len(title_right))
         header_line = (title_left + (" " * space_len) + title_right)[:cols]
         buf.append(f"\033[1;1H" + self.theme_engine.style("bright_foreground", "accent", header_line, bold=True) + "\033[K")
@@ -554,9 +681,12 @@ class MecaTUI:
             buf.append(f"\033[{screen_y};{sidebar_w + 2}H{c_line}\033[K")
 
         # 3. Barra Inferior de Estado en fila exacta 'rows' (con guía q/Esc: Salir)
-        keys_hint = " Tab: Foco │ r: Restablecer │ c: Cancelar │ a: Aplicar │ q/Esc: Salir "
-        if cols < 100:
-            keys_hint = " r:Restablecer │ c:Cancelar │ a:Aplicar │ q/Esc:Salir "
+        if self.view_mode == "theme_creator":
+            keys_hint = " r:Restablecer │ Esc/c:Volver │ a:Crear Tema "
+        else:
+            keys_hint = " Tab: Foco │ r: Restablecer │ c: Cancelar │ a: Aplicar │ q/Esc: Salir "
+            if cols < 100:
+                keys_hint = " r:Restablecer │ c:Cancelar │ a:Aplicar │ q/Esc:Salir "
         max_status_w = max(8, cols - len(keys_hint) - 1)
         status_txt = f" {self.status_message}"[:max_status_w]
         footer_space = max(0, cols - 1 - len(status_txt) - len(keys_hint))
@@ -582,8 +712,9 @@ class MecaTUI:
         lines: List[str] = []
         current_cat = None
         self._sidebar_click_map.clear()
+        active_sections = self._get_active_sections()
 
-        for idx, (cat, sec_id, icon, title, desc) in enumerate(self.SECTIONS):
+        for idx, (cat, sec_id, icon, title, desc) in enumerate(active_sections):
             if cat != current_cat:
                 if current_cat is not None and len(lines) < max_rows:
                     lines.append(" " * width)
@@ -629,72 +760,83 @@ class MecaTUI:
         is_hover: bool,
     ) -> Tuple[str, str, str, Tuple[int, int]]:
         """
-        Renderiza un tema guardado con apariencia de contenedor de tarjeta cuadrada:
+        Renderiza un tema guardado con apariencia de contenedor de tarjeta cuadrada sin cuadrados de colores:
         ┌──────────────────────────────────────────────────────────────────┐
-        │ ■ nombre [ACTIVO]    ██ ██ ██ ██  Modo: dark    ┃ Activar │      │
+        │ ▸ nombre [SELECCIONADO]  Modo: dark │ Iconos: Yaru  [Aplicar]    │
         └──────────────────────────────────────────────────────────────────┘
+        Seleccionar la tarjeta resalta el tema; se activa al pulsar 'Aplicar'.
         """
         u_name = item.name
         info = self.theme_engine.get_theme_info(u_name)
-        colors = info.get("colors", {})
         mode = info.get("mode", "dark")
-        is_act = (
-            self.theme_engine.normalize_theme_slug(u_name)
-            == self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme)
+        icons = info.get("icon_theme", "Adwaita")
+
+        u_slug = self.theme_engine.normalize_theme_slug(u_name)
+        act_slug = self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme)
+        sel_slug = self.theme_engine.normalize_theme_slug(
+            str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
         )
+
+        is_act = (u_slug == act_slug)
+        is_chosen = (u_slug == sel_slug)
 
         card_w = max(28, width - 3)
         inner_w = card_w - 2
 
-        border_col = "accent" if (is_sel or is_hover) else ("bright_foreground" if is_act else "muted")
-        card_bg = "soft_hover" if is_hover else ("soft_selection" if is_sel else ("soft_muted" if is_act else None))
+        border_col = "accent" if (is_chosen or is_sel or is_hover) else ("bright_foreground" if is_act else "muted")
+        card_bg = (
+            "soft_hover"
+            if is_hover
+            else ("soft_selection" if (is_chosen or is_sel) else ("soft_muted" if is_act else None))
+        )
 
-        # Construir muestras de color (swatches) reales de la paleta del tema
-        swatches_styled = ""
-        for c_key in ("accent", "background", "foreground", "selection"):
-            hex_c = str(colors.get(c_key, "#888888"))
-            r, g, b = self.theme_engine.hex_to_rgb(hex_c)
-            swatches_styled += f"\033[38;2;{r};{g};{b}m██\033[0m"
-            if card_bg:
-                bg_r, bg_g, bg_b = self.theme_engine.hex_to_rgb(self.theme_engine.colors.get(card_bg, "#1a1b26"))
-                swatches_styled += f"\033[48;2;{bg_r};{bg_g};{bg_b}m \033[0m"
-            else:
-                swatches_styled += " "
-        swatches_vis_w = 12  # 4 * ("██" + " ")
+        if is_chosen and not is_act:
+            badge = " [SELECCIONADO]"
+            btn_txt = " [Seleccionado] "
+        elif is_act and is_chosen:
+            badge = " [ACTIVO]"
+            btn_txt = " [Activo] "
+        elif is_act:
+            badge = " [ACTIVO]"
+            btn_txt = " [Seleccionar] "
+        else:
+            badge = ""
+            btn_txt = " [Seleccionar] "
 
-        badge = " [ACTIVO]" if is_act else ""
-        btn_txt = " [Activo] " if is_act else " [Activar] "
         btn_vis_w = len(btn_txt)
+        marker = " ▸ " if is_chosen else "   "
+        title_str = f"{marker}{u_name}{badge}"
+        meta_str = f"  │  Modo: {mode}  │  Iconos: {icons}"
+        avail_left_w = max(10, inner_w - btn_vis_w - 1)
+        left_plain = (title_str + meta_str)[:avail_left_w].ljust(avail_left_w)
+        pad_mid_w = max(0, inner_w - len(left_plain) - btn_vis_w)
 
-        title_str = f" ■ {u_name}{badge}"
-        meta_str = f" ({mode}) "
-        avail_title_w = max(8, inner_w - swatches_vis_w - btn_vis_w - len(meta_str) - 2)
-        left_plain = (title_str[:avail_title_w] + meta_str).ljust(avail_title_w + len(meta_str))
-        pad_mid_w = max(1, inner_w - len(left_plain) - swatches_vis_w - btn_vis_w)
+        is_bold_card = (is_chosen or is_sel or is_hover or is_act)
+        top_border = " " + self.theme_engine.style(border_col, None, "┌" + ("─" * inner_w) + "┐", bold=is_bold_card)
+        bot_border = " " + self.theme_engine.style(border_col, None, "└" + ("─" * inner_w) + "┘", bold=is_bold_card)
 
-        top_border = " " + self.theme_engine.style(border_col, None, "┌" + ("─" * inner_w) + "┐", bold=(is_sel or is_hover))
-        bot_border = " " + self.theme_engine.style(border_col, None, "└" + ("─" * inner_w) + "┘", bold=(is_sel or is_hover))
-
-        left_styled = self.theme_engine.style("bright_foreground", card_bg, left_plain, bold=True)
+        left_styled = self.theme_engine.style("bright_foreground", card_bg, left_plain, bold=is_bold_card)
         pad_styled = self.theme_engine.style("foreground", card_bg, " " * pad_mid_w)
-        btn_fg = "accent" if (is_sel or is_hover or is_act) else "bright_foreground"
+        btn_fg = "accent" if (is_chosen or is_sel or is_hover or is_act) else "bright_foreground"
         btn_styled = self.theme_engine.style(btn_fg, card_bg, btn_txt, bold=True)
 
         mid_line = (
             " "
-            + self.theme_engine.style(border_col, None, "│", bold=(is_sel or is_hover))
+            + self.theme_engine.style(border_col, None, "│", bold=is_bold_card)
             + left_styled
-            + swatches_styled
             + pad_styled
             + btn_styled
-            + self.theme_engine.style(border_col, None, "│", bold=(is_sel or is_hover))
+            + self.theme_engine.style(border_col, None, "│", bold=is_bold_card)
         )
 
         return top_border, mid_line, bot_border, (1, card_w)
 
     def _render_content(self, width: int, max_rows: int, sidebar_w: int) -> List[str]:
         lines: List[str] = []
-        sec_meta = self.SECTIONS[self.current_section_idx]
+        active_sections = self._get_active_sections()
+        if self.current_section_idx >= len(active_sections):
+            self.current_section_idx = 0
+        sec_meta = active_sections[self.current_section_idx]
         sec_id = sec_meta[1]
         sec_title = sec_meta[3]
         sec_desc = sec_meta[4]
@@ -705,14 +847,18 @@ class MecaTUI:
         lines.append(" " + self.theme_engine.fg("muted", sec_desc[:width - 2]))
         lines.append(" " + self.theme_engine.fg("muted", "─" * max(1, width - 2)))
 
-        if sec_id == "autostart":
-            self.section_items["autostart"] = self._build_autostart_section_items()
-        elif sec_id == "bar":
-            self.section_items["bar"] = self._build_bar_section_items()
-        elif sec_id == "themes":
-            self.section_items["themes"] = self._build_themes_section_items()
+        if sec_id.startswith("creator_"):
+            items = self._build_creator_section_items(sec_id)
+            self.section_items[sec_id] = items
+        else:
+            if sec_id == "autostart":
+                self.section_items["autostart"] = self._build_autostart_section_items()
+            elif sec_id == "bar":
+                self.section_items["bar"] = self._build_bar_section_items()
+            elif sec_id == "themes":
+                self.section_items["themes"] = self._build_themes_section_items()
+            items = self.section_items.get(sec_id, [])
 
-        items = self.section_items.get(sec_id, [])
         is_active_pane = (self.active_pane == "content" and not self.modal_state)
         content_start_x = sidebar_w + 2
 
@@ -853,7 +999,7 @@ class MecaTUI:
         self.dropdown_anchor_x = anchor_x
 
     def _render_dropdown_overlay(self, cols: int, rows: int, sidebar_w: int) -> List[str]:
-        """Renderiza el menú desplegable interactivo sobre la opción seleccionada."""
+        """Renderiza el menú desplegable interactivo con previsualización de color en códigos Hex."""
         self._dropdown_row_map.clear()
         if not self.dropdown_item or not self.dropdown_options:
             return []
@@ -866,8 +1012,11 @@ class MecaTUI:
             self.dropdown_scroll = self.dropdown_idx - max_vis + 1
         self.dropdown_scroll = max(0, min(self.dropdown_scroll, max(0, len(opts) - max_vis)))
 
-        max_opt_len = max(len(str(o)) for o in opts)
-        inner_w = max(20, min(42, max_opt_len + 8))
+        max_opt_len = max(
+            len(str(o)) + (3 if self._extract_hex_color(str(o)) else 0)
+            for o in opts
+        )
+        inner_w = max(22, min(44, max_opt_len + 8))
         box_w = inner_w + 2
         box_h = max_vis + 2
 
@@ -894,16 +1043,33 @@ class MecaTUI:
             is_sel = (opt_idx == self.dropdown_idx)
             is_hov = (opt_idx == self.hover_dropdown_idx)
             is_cur = (opt_str == cur_val)
+            is_bold = (is_sel or is_hov or is_cur)
 
             check = "✓" if is_cur else ("▸" if (is_sel or is_hov) else " ")
-            row_txt = f" {check} {opt_str}"[:inner_w].ljust(inner_w)
             row_bg = "soft_hover" if is_hov else ("soft_selection" if is_sel else "background")
-            row_fg = "bright_foreground" if (is_sel or is_hov or is_cur) else "foreground"
+            row_fg = "bright_foreground" if is_bold else "foreground"
+
+            hex_c = self._extract_hex_color(opt_str)
+            if hex_c:
+                prefix_plain = f" {check} "
+                rem_w = max(1, inner_w - len(prefix_plain) - 2)
+                suffix_padded = f" {opt_str}"[:rem_w].ljust(rem_w)
+                r_c, g_c, b_c = self.theme_engine.hex_to_rgb(hex_c)
+                br, bg_v, bb = self.theme_engine.hex_to_rgb(self.theme_engine.colors.get(row_bg, "#1a1b26"))
+                swatch_seq = f"\033[48;2;{br};{bg_v};{bb}m\033[38;2;{r_c};{g_c};{b_c}m██\033[0m"
+                row_styled = (
+                    self.theme_engine.style(row_fg, row_bg, prefix_plain, bold=is_bold)
+                    + swatch_seq
+                    + self.theme_engine.style(row_fg, row_bg, suffix_padded, bold=is_bold)
+                )
+            else:
+                row_txt = f" {check} {opt_str}"[:inner_w].ljust(inner_w)
+                row_styled = self.theme_engine.style(row_fg, row_bg, row_txt, bold=is_bold)
 
             overlay.append(
                 f"\033[{scr_y};{start_x}H"
                 + self.theme_engine.style("accent", "background", "┃", bold=True)
-                + self.theme_engine.style(row_fg, row_bg, row_txt, bold=(is_sel or is_hov or is_cur))
+                + row_styled
                 + self.theme_engine.style("accent", "background", "│", bold=True)
             )
 
@@ -922,11 +1088,18 @@ class MecaTUI:
         self._button_click_map.clear()
         self._button_row_range = (btn_top_screen_y, btn_top_screen_y + 2)
 
-        buttons_spec = [
-            ("reset", 0, " Restablecer "),
-            ("cancel", 1, " Cancelar "),
-            ("save", 2, "  Aplicar  "),
-        ]
+        if self.view_mode == "theme_creator":
+            buttons_spec = [
+                ("reset", 0, " Restablecer "),
+                ("cancel", 1, "  Volver  "),
+                ("save", 2, " Crear Tema "),
+            ]
+        else:
+            buttons_spec = [
+                ("reset", 0, " Restablecer "),
+                ("cancel", 1, " Cancelar "),
+                ("save", 2, "  Aplicar  "),
+            ]
 
         gap = 2
         total_btns_w = sum(len(lbl) + 2 for _, _, lbl in buttons_spec) + gap * (len(buttons_spec) - 1)
@@ -989,7 +1162,7 @@ class MecaTUI:
     ) -> Tuple[str, str, str, int]:
         """
         Dibuja los controles del panel derecho usando cuadrados cerrados reales
-        de 3 líneas (┌───┐ / ┃ - │ / ┗━━━┙) con destello suave (soft_hover / soft_selection).
+        de 3 líneas (┌───┐ / ┃ - │ / ┗━━━┙) con destello suave y previsualización de color en códigos Hex.
         """
         val = self._get_item_value(item)
         b_col = "bright_foreground" if is_sel else "foreground"
@@ -1049,18 +1222,46 @@ class MecaTUI:
             return box_top, box_mid, box_bot, 9
 
         elif item.item_type == "select":
-            raw_lbl = f" {val} ▾ "
-            inner_w = len(raw_lbl)
+            val_str = str(val)
+            hex_c = self._extract_hex_color(val_str)
             c_hov = (hover_sub == "control") or (self.dropdown_open and self.dropdown_item == item)
-            c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
             inner_bg = "soft_hover" if c_hov else ("soft_selection" if is_sel else None)
-            inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=(is_sel or c_hov))
+            if hex_c:
+                # Mostrar previsualización del color junto al código hexadecimal
+                vis_lbl = f" ██ {val_str} ▾ "
+                inner_w = len(vis_lbl)
+                r_c, g_c, b_c = self.theme_engine.hex_to_rgb(hex_c)
+                bg_seq = ""
+                if inner_bg:
+                    br, bg_v, bb = self.theme_engine.hex_to_rgb(self.theme_engine.colors.get(inner_bg, "#1a1b26"))
+                    bg_seq = f"\033[48;2;{br};{bg_v};{bb}m"
+                swatch_seq = f"{bg_seq}\033[38;2;{r_c};{g_c};{b_c}m██\033[0m"
+                inner_s = (
+                    self.theme_engine.style("bright_foreground", inner_bg, " ", bold=(is_sel or c_hov))
+                    + swatch_seq
+                    + self.theme_engine.style("bright_foreground", inner_bg, f" {val_str} ▾ ", bold=(is_sel or c_hov))
+                )
+            else:
+                raw_lbl = f" {val_str} ▾ "
+                inner_w = len(raw_lbl)
+                inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=(is_sel or c_hov))
+
+            c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
             c_mid = self.theme_engine.fg("accent" if c_hov else sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
             c_bot = self.theme_engine.fg("accent" if c_hov else sh_col, "┗" + ("━" * inner_w) + "┙")
             return c_top, c_mid, c_bot, inner_w + 2
 
         elif item.item_type == "action":
-            raw_lbl = " Activar " if item.key.startswith("user_theme:item:") else " Ejecutar "
+            if item.key == "action:create_theme":
+                raw_lbl = " Nuevo "
+            elif item.key == "action:clone_theme":
+                raw_lbl = " Duplicar "
+            elif item.key == "creator:name":
+                raw_lbl = f" {self.theme_creator_spec.get('name', 'nuevo-tema')} "
+            elif item.key.startswith("user_theme:item:"):
+                raw_lbl = " Seleccionar "
+            else:
+                raw_lbl = " Ejecutar "
             inner_w = len(raw_lbl)
             c_hov = (hover_sub == "control")
             c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
@@ -1102,8 +1303,8 @@ class MecaTUI:
         - "confirm_section_change": aplicar/descartar cambios al cambiar de sección
         - "confirm_reset": confirmar restablecimiento a valores predeterminados
         - "input_autostart": selector desplegable de aplicaciones/servicios o entrada de comando
-        - "input_theme_hex": ingresar color hexadecimal personalizado para el tema Omarchy
-        - "create_theme": crear y agregar un nuevo tema Omarchy
+        - "input_theme_hex": ingresar color hexadecimal con previsualización en vivo
+        - "input_creator_text": ingresar nombre del nuevo tema o ruta personalizada
         """
         self._modal_button_click_map.clear()
         self._modal_kind_click_range = (0, 0, 0)
@@ -1113,9 +1314,7 @@ class MecaTUI:
 
         if self.modal_state == "input_autostart":
             return self._render_autostart_modal(cols, rows)
-        if self.modal_state == "create_theme":
-            return self._render_create_theme_modal(cols, rows)
-        if self.modal_state == "input_theme_hex":
+        if self.modal_state in ("input_theme_hex", "input_creator_text"):
             return self._render_input_modal(cols, rows)
 
         if self.modal_state == "confirm_section_change":
@@ -1387,97 +1586,19 @@ class MecaTUI:
         overlay.append(f"\033[{btn_y_top + 3};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
         return overlay
 
-    def _render_create_theme_modal(self, cols: int, rows: int) -> List[str]:
-        """Renderiza la ventana modal para crear y registrar un nuevo tema Omarchy."""
-        title = " CREAR NUEVO TEMA OMARCHY "
-        mw = min(64, cols - 4)
-        inner_mw = mw - 2
-        mh = 13
-        start_x = max(2, (cols - mw) // 2)
-        start_y = max(2, (rows - mh) // 2)
-
-        overlay: List[str] = []
-        top_line = "┌" + ("─" * inner_mw) + "┐"
-        title_centered = title.center(inner_mw)[:inner_mw]
-        sep_line = "├" + ("─" * inner_mw) + "┤"
-        bot_line = "┗" + ("━" * inner_mw) + "┙"
-
-        base_line = f"  Plantilla base (↑/↓ o clic): {self.modal_base_theme} ▾".ljust(inner_mw)[:inner_mw]
-        mode_line = f"  Modo inicial (Tab o clic):   {self.modal_theme_mode} ▾".ljust(inner_mw)[:inner_mw]
-        self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
-        self._modal_mode_click_range = (start_y + 4, start_x + 2, start_x + inner_mw - 2)
-
-        box_w = inner_mw - 6
-        shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
-        input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
-        input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
-        input_bot = ("  ┗" + ("━" * box_w) + "┙  ").ljust(inner_mw)[:inner_mw]
-
-        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
-        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
-        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
-        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + base_line + "│", bold=True))
-        overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_muted", "┃" + mode_line + "│", bold=True))
-        overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + "  Nombre del nuevo tema (ej. cyber-night):".ljust(inner_mw)[:inner_mw] + "│"))
-        overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
-        overlay.append(f"\033[{start_y + 7};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
-        overlay.append(f"\033[{start_y + 8};{start_x}H" + self.theme_engine.style("accent", "background", "┃" + input_bot + "│"))
-
-        modal_btns = [
-            (0, " Cancelar "),
-            (1, " Crear Tema "),
-        ]
-        gap = 3
-        btns_total_w = sum(len(lbl) + 2 for _, lbl in modal_btns) + gap
-        pad_left = max(1, (inner_mw - btns_total_w) // 2)
-        pad_right = max(0, inner_mw - btns_total_w - pad_left)
-
-        btn_y_top = start_y + 9
-        self._modal_button_row_range = (btn_y_top, btn_y_top + 2)
-
-        b_r0 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
-        b_r1 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
-        b_r2 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
-
-        cur_x = start_x + 1 + pad_left
-        for b_idx, b_lbl in modal_btns:
-            bw = len(b_lbl) + 2
-            is_b_hov = (self.hover_modal_btn_idx == b_idx)
-            is_b_sel = (self.modal_selected_idx == b_idx) or is_b_hov
-            self._modal_button_click_map[b_idx] = (cur_x, cur_x + bw - 1)
-            b_col = "bright_foreground" if is_b_sel else "foreground"
-            sh_col = "accent" if is_b_sel else "muted"
-            btn_bg = "soft_hover" if is_b_hov else ("soft_selection" if is_b_sel else "background")
-
-            r0_s = self.theme_engine.style(b_col, "background", "┌" + ("─" * len(b_lbl)) + "┐", bold=is_b_sel)
-            r1_s = (
-                self.theme_engine.style(sh_col, "background", "┃", bold=True)
-                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", btn_bg, b_lbl, bold=is_b_sel)
-                + self.theme_engine.style(b_col, "background", "│", bold=is_b_sel)
-            )
-            r2_s = self.theme_engine.style(sh_col, "background", "┗" + ("━" * len(b_lbl)) + "┙", bold=True)
-
-            sep_gap = self.theme_engine.style("foreground", "background", " " * gap) if b_idx == 0 else ""
-            b_r0.append(r0_s + sep_gap)
-            b_r1.append(r1_s + sep_gap)
-            b_r2.append(r2_s + sep_gap)
-            cur_x += bw + gap
-
-        b_r0.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
-        b_r1.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
-        b_r2.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
-
-        overlay.append(f"\033[{btn_y_top};{start_x}H" + "".join(b_r0))
-        overlay.append(f"\033[{btn_y_top + 1};{start_x}H" + "".join(b_r1))
-        overlay.append(f"\033[{btn_y_top + 2};{start_x}H" + "".join(b_r2))
-        overlay.append(f"\033[{start_y + 12};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
-        return overlay
-
     def _render_input_modal(self, cols: int, rows: int) -> List[str]:
-        """Renderiza la ventana modal interactiva para entrada de Color Hex."""
-        title = " EDITAR COLOR HEX DEL TEMA OMARCHY "
-        kind_val = f"Color a editar: {self.modal_hex_target} ▾"
-        prompt_lbl = "Escribe el codigo hexadecimal (ej. #E31B23):"
+        """Renderiza la ventana modal interactiva para entrada de Color Hex (con previsualización) o texto."""
+        is_hex_mode = (self.modal_state == "input_theme_hex")
+        if is_hex_mode:
+            title = " ESTABLECER CODIGO DE COLOR HEXADECIMAL "
+            prop_name = self.modal_hex_target.replace("creator:", "")
+            sub_lbl = f"  Propiedad: {prop_name}"
+            prompt_lbl = "Escribe el codigo hexadecimal (#RRGGBB, ej. #E31B23):"
+        else:
+            title = " EDITAR VALOR DEL TEMA OMARCHY "
+            prop_name = self.modal_text_target.replace("creator:", "")
+            sub_lbl = f"  Campo: {prop_name}"
+            prompt_lbl = "Escribe el nombre del tema o ruta del archivo:"
 
         mw = min(64, cols - 4)
         inner_mw = mw - 2
@@ -1491,8 +1612,30 @@ class MecaTUI:
         sep_line = "├" + ("─" * inner_mw) + "┤"
         bot_line = "┗" + ("━" * inner_mw) + "┙"
 
-        selector_line = f"  Propiedad (↑/↓ o clic): {kind_val}".ljust(inner_mw)[:inner_mw]
-        self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+
+        if is_hex_mode:
+            cand_hex = self.modal_input_text.strip()
+            if not cand_hex.startswith("#"):
+                cand_hex = "#" + cand_hex
+            valid_hex = cand_hex if re.match(r"^#[0-9A-Fa-f]{6}$", cand_hex) else "#888888"
+            r_c, g_c, b_c = self.theme_engine.hex_to_rgb(valid_hex)
+            br, bg_v, bb = self.theme_engine.hex_to_rgb(self.theme_engine.colors.get("soft_selection", "#292e42"))
+            swatch_seq = f"\033[48;2;{br};{bg_v};{bb}m\033[38;2;{r_c};{g_c};{b_c}m████\033[0m"
+            prev_prefix = f"{sub_lbl}  │  Vista previa: "
+            rem_w = max(1, inner_mw - len(prev_prefix) - 4)
+            prev_suffix = f" {valid_hex}".ljust(rem_w)[:rem_w]
+            line3 = (
+                self.theme_engine.style("bright_foreground", "soft_selection", "┃" + prev_prefix, bold=True)
+                + swatch_seq
+                + self.theme_engine.style("bright_foreground", "soft_selection", prev_suffix + "│", bold=True)
+            )
+            overlay.append(f"\033[{start_y + 3};{start_x}H" + line3)
+        else:
+            selector_line = sub_lbl.ljust(inner_mw)[:inner_mw]
+            overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
 
         box_w = inner_mw - 6
         shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
@@ -1500,10 +1643,6 @@ class MecaTUI:
         input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
         input_bot = ("  ┗" + ("━" * box_w) + "┙  ").ljust(inner_mw)[:inner_mw]
 
-        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
-        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
-        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
-        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
         overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + f"  {prompt_lbl}".ljust(inner_mw)[:inner_mw] + "│"))
         overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
         overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
@@ -1511,7 +1650,7 @@ class MecaTUI:
 
         modal_btns = [
             (0, " Cancelar "),
-            (1, " Aplicar "),
+            (1, " Guardar "),
         ]
         gap = 3
         btns_total_w = sum(len(lbl) + 2 for _, lbl in modal_btns) + gap
@@ -1699,6 +1838,13 @@ class MecaTUI:
         """Obtiene el valor actual de la variable en memoria."""
         key = item.key
 
+        if key.startswith("creator:"):
+            field = key.split(":", 1)[1]
+            if field == "keyboard_rgb":
+                raw_kb = str(self.theme_creator_spec.get("keyboard_rgb", "7aa2f7")).lstrip("#")[:6]
+                return f"#{raw_kb}"
+            return self.theme_creator_spec.get(field, "")
+
         if key.startswith("autostart:item:"):
             idx = int(key.split(":")[-1])
             if 0 <= idx < len(self.autostart_items):
@@ -1755,16 +1901,18 @@ class MecaTUI:
     def _request_section_change(self, target_idx: int, focus_content: bool = False) -> None:
         """
         Cambia a la sección 'target_idx' de la barra lateral izquierda.
-        Si existen cambios sin aplicar en la sección actual, abre la ventana modal de confirmación.
+        En la ventana principal, si existen cambios sin aplicar, abre la confirmación.
+        En la ventana de creación de temas, cambia directamente entre las categorías del estudio.
         """
         self.dropdown_open = False
-        target_idx = max(0, min(len(self.SECTIONS) - 1, target_idx))
+        active_sections = self._get_active_sections()
+        target_idx = max(0, min(len(active_sections) - 1, target_idx))
         if target_idx == self.current_section_idx:
             if focus_content:
                 self.active_pane = "content"
             return
 
-        if self.has_unsaved_changes():
+        if self.view_mode == "main" and self.has_unsaved_changes():
             self.modal_state = "confirm_section_change"
             self.pending_section_idx = target_idx
             self.pending_focus_content = focus_content
@@ -1801,8 +1949,6 @@ class MecaTUI:
             if choice_idx == 0:  # Descartar cambios y cambiar de sección
                 self.settings = dict(self.saved_settings)
                 self.autostart_items = [dict(x) for x in self.saved_autostart]
-                self.config_sync.save_gui_settings(self.settings, apply_live=True)
-                self.config_sync.save_autostart_items(self.autostart_items)
                 self.status_message = "Cambios descartados."
                 if self.pending_section_idx is not None:
                     self.current_section_idx = self.pending_section_idx
@@ -1847,11 +1993,8 @@ class MecaTUI:
                         "enabled": True,
                     })
                     self._sync_autostart_into_settings()
-                    self.config_sync.save_autostart_items(self.autostart_items)
-                    self.saved_autostart = [dict(x) for x in self.autostart_items]
-                    self.saved_settings = dict(self.settings)
                     self.section_items["autostart"] = self._build_autostart_section_items()
-                    self.status_message = f"✓ Agregado a autostart.lua: {chosen_name} ({chosen_cmd})"
+                    self.status_message = f"Agregado en cola: {chosen_name} (Pulsa 'Aplicar' para guardar)"
                 else:
                     self.status_message = "Entrada vacia cancelada."
             else:
@@ -1859,47 +2002,25 @@ class MecaTUI:
             self.modal_input_text = ""
             self.autostart_selected_app_name = ""
 
-        elif state == "create_theme":
-            if choice_idx == 1:
-                new_name = self.modal_input_text.strip()
-                if new_name:
-                    self.status_message = f"Creando tema Omarchy '{new_name}'..."
-                    self.render()
-                    ok, msg = self.theme_engine.create_theme(
-                        new_name=new_name,
-                        base_theme=self.modal_base_theme,
-                        mode=self.modal_theme_mode,
-                        activate=True,
-                    )
-                    self._sync_theme_into_settings()
-                    self.saved_settings = dict(self.settings)
-                    self.available_themes = self.theme_engine.list_available_themes()
-                    self.section_items = self._init_section_items()
-                    self.status_message = msg
-                else:
-                    self.status_message = "Debes escribir un nombre para el nuevo tema."
-            else:
-                self.status_message = "Creacion de tema cancelada."
-            self.modal_input_text = ""
-
         elif state == "input_theme_hex":
             if choice_idx == 1:
                 hex_val = self.modal_input_text.strip()
                 if not hex_val.startswith("#"):
                     hex_val = "#" + hex_val
                 if re.match(r"^#[0-9A-Fa-f]{6}$", hex_val):
-                    target_map = {
-                        "accent": "omarchy:theme_accent",
-                        "background": "omarchy:theme_bg",
-                        "foreground": "omarchy:theme_fg",
-                        "selection": "omarchy:theme_sel",
-                    }
-                    item_key = target_map.get(self.modal_hex_target, "omarchy:theme_accent")
-                    self._set_item_value(item_key, hex_val)
-                    self.save_all()
-                    self.status_message = f"✓ Color {self.modal_hex_target} actualizado a {hex_val} en tema actual y original."
+                    self._set_item_value(self.modal_hex_target, hex_val)
+                    self.status_message = f"✓ Color actualizado a {hex_val}."
                 else:
                     self.status_message = "Formato Hex invalido (usa #RRGGBB, ej. #E31B23)."
+            self.modal_input_text = ""
+
+        elif state == "input_creator_text":
+            if choice_idx == 1:
+                txt_val = self.modal_input_text.strip()
+                if txt_val:
+                    field = self.modal_text_target.replace("creator:", "")
+                    self.theme_creator_spec[field] = txt_val
+                    self.status_message = f"✓ Valor '{field}' establecido en: {txt_val}"
             self.modal_input_text = ""
 
     # ==========================
@@ -1908,7 +2029,8 @@ class MecaTUI:
 
     def _move_content_selection(self, delta: int) -> None:
         """Mueve la selección vertical en el panel derecho saltando encabezados ('header')."""
-        sec_id = self.SECTIONS[self.current_section_idx][1]
+        active_sections = self._get_active_sections()
+        sec_id = active_sections[self.current_section_idx][1]
         items = self.section_items.get(sec_id, [])
         if not items:
             return
@@ -1965,14 +2087,28 @@ class MecaTUI:
             if ch in (b"\r", b"\n", b" "):
                 if self.dropdown_item and 0 <= self.dropdown_idx < len(self.dropdown_options):
                     chosen = self.dropdown_options[self.dropdown_idx]
-                    self._set_item_value(self.dropdown_item.key, chosen)
-                    self._apply_hyprctl_live(self.dropdown_item.key, chosen)
+                    target_key = self.dropdown_item.key
+                    self.dropdown_open = False
+                    if chosen == "Escribir #Hex...":
+                        self.modal_state = "input_theme_hex"
+                        self.modal_hex_target = target_key
+                        self.modal_input_text = str(self._get_item_value(self.dropdown_item))
+                        self.modal_selected_idx = 1
+                        return
+                    elif chosen == "Escribir ruta...":
+                        self.modal_state = "input_creator_text"
+                        self.modal_text_target = target_key
+                        self.modal_input_text = str(self._get_item_value(self.dropdown_item))
+                        self.modal_selected_idx = 1
+                        return
+                    else:
+                        self._set_item_value(target_key, chosen)
                 self.dropdown_open = False
                 return
             return
 
-        # 2. Si hay una ventana modal interactiva activa (input_autostart, create_theme o input_theme_hex)
-        if self.modal_state in ("input_autostart", "create_theme", "input_theme_hex"):
+        # 2. Si hay una ventana modal interactiva activa (input_autostart, input_theme_hex o input_creator_text)
+        if self.modal_state in ("input_autostart", "input_theme_hex", "input_creator_text"):
             if ch == b"\x1b" and len(ch) == 1:
                 if self.modal_state == "input_autostart" and self.autostart_dropdown_open:
                     self.autostart_dropdown_open = False
@@ -2003,13 +2139,6 @@ class MecaTUI:
                     if ch in (b"\r", b"\n") and self.autostart_dropdown_open:
                         self._select_autostart_dropdown_app(self.autostart_app_idx)
                         return
-            else:
-                if ch in (b"\x1b[A", b"\x1b[B"):  # Arriba / Abajo cambia plantilla o propiedad
-                    self._cycle_input_modal_kind()
-                    return
-                if ch == b"\t" and self.modal_state == "create_theme":
-                    self.modal_theme_mode = "light" if self.modal_theme_mode == "dark" else "dark"
-                    return
 
             if ch in (b"\x1b[D", b"\x1b[Z"):
                 self.modal_selected_idx = max(0, self.modal_selected_idx - 1)
@@ -2059,14 +2188,23 @@ class MecaTUI:
                 return
             return
 
-        # Salir con q o Esc
+        # Salir o regresar con Esc / q
+        if ch == b"\x1b" and len(ch) == 1 and self.view_mode == "theme_creator":
+            self.view_mode = "main"
+            self.current_section_idx = self._prev_main_section_idx
+            self.selected_item_idx = 0
+            self.content_scroll_offset = 0
+            self.status_message = "Creacion de tema cancelada."
+            return
+
         if ch in (b"q", b"Q", b"\x1b") and len(ch) == 1:
             self.running = False
             return
 
         # Eliminar entrada de autostart o tema personalizado con Supr / Delete (\x1b[3~) o 'x'
-        if ch in (b"\x1b[3~", b"x", b"X"):
-            sec_id = self.SECTIONS[self.current_section_idx][1]
+        if ch in (b"\x1b[3~", b"x", b"X") and self.view_mode == "main":
+            active_sections = self._get_active_sections()
+            sec_id = active_sections[self.current_section_idx][1]
             if sec_id == "autostart" and self.selected_item_idx >= 1:
                 entry_idx = self.selected_item_idx - 1
                 if 0 <= entry_idx < len(self.autostart_items):
@@ -2162,35 +2300,18 @@ class MecaTUI:
             return
 
     def _cycle_input_modal_kind(self) -> None:
-        """Alterna el selector de tipo o plantilla en los modales de entrada de texto."""
+        """Alterna el selector de tipo en el modal de autostart."""
         if self.modal_state == "input_autostart":
             self.modal_input_kind = "exec" if self.modal_input_kind == "launch" else "launch"
             if self.modal_input_kind == "exec":
                 self.autostart_dropdown_open = False
                 self.autostart_selected_app_name = ""
-        elif self.modal_state == "create_theme":
-            themes = self.available_themes if self.available_themes else ["tokyo-night", "catppuccin", "lizarbe"]
-            try:
-                idx = (themes.index(self.modal_base_theme) + 1) % len(themes)
-            except ValueError:
-                idx = 0
-            self.modal_base_theme = themes[idx]
-        elif self.modal_state == "input_theme_hex":
-            order = ["accent", "background", "foreground", "selection"]
-            idx = (order.index(self.modal_hex_target) + 1) % len(order) if self.modal_hex_target in order else 0
-            self.modal_hex_target = order[idx]
-            cur_map = {
-                "accent": self.settings.get("omarchy_theme_accent", "#E31B23"),
-                "background": self.settings.get("omarchy_theme_bg", "#08080B"),
-                "foreground": self.settings.get("omarchy_theme_fg", "#d8d8d8"),
-                "selection": self.settings.get("omarchy_theme_sel", "#45475a"),
-            }
-            self.modal_input_text = cur_map.get(self.modal_hex_target, "#E31B23")
 
     def _handle_mouse_event(self, btn: int, x: int, y: int, act: bytes) -> None:
         """Procesa clics, arrastres, rueda del ratón y movimiento hover (btn == 35)."""
         cols, rows = shutil.get_terminal_size((84, 42))
         sidebar_w = self._get_sidebar_width(cols)
+        active_sections = self._get_active_sections()
 
         # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
         if self.dropdown_open and not self.modal_state:
@@ -2213,8 +2334,22 @@ class MecaTUI:
                     opt_idx = self._dropdown_row_map[y]
                     if self.dropdown_item and 0 <= opt_idx < len(self.dropdown_options):
                         chosen = self.dropdown_options[opt_idx]
-                        self._set_item_value(self.dropdown_item.key, chosen)
-                        self._apply_hyprctl_live(self.dropdown_item.key, chosen)
+                        target_key = self.dropdown_item.key
+                        self.dropdown_open = False
+                        if chosen == "Escribir #Hex...":
+                            self.modal_state = "input_theme_hex"
+                            self.modal_hex_target = target_key
+                            self.modal_input_text = str(self._get_item_value(self.dropdown_item))
+                            self.modal_selected_idx = 1
+                            return
+                        elif chosen == "Escribir ruta...":
+                            self.modal_state = "input_creator_text"
+                            self.modal_text_target = target_key
+                            self.modal_input_text = str(self._get_item_value(self.dropdown_item))
+                            self.modal_selected_idx = 1
+                            return
+                        else:
+                            self._set_item_value(target_key, chosen)
                 self.dropdown_open = False
                 return
             return
@@ -2253,11 +2388,6 @@ class MecaTUI:
                 if y == ky and kxmin <= x <= kxmax:
                     self._cycle_input_modal_kind()
                     return
-                if self.modal_state == "create_theme":
-                    my, mxmin, mxmax = self._modal_mode_click_range
-                    if y == my and mxmin <= x <= mxmax:
-                        self.modal_theme_mode = "light" if self.modal_theme_mode == "dark" else "dark"
-                        return
                 if self.modal_state == "input_autostart":
                     # Clic sobre el botón del selector desplegable (solo funciona en modo 'launch')
                     ddy1, ddy2, ddx1, ddx2 = self._autostart_dropdown_btn_range
@@ -2292,8 +2422,8 @@ class MecaTUI:
                     self.hover_item_idx = None
                     self.hover_subcontrol = None
                     self.hover_button_key = None
-                    if sec_idx is not None:
-                        _, _, _, s_title, s_desc = self.SECTIONS[sec_idx]
+                    if sec_idx is not None and 0 <= sec_idx < len(active_sections):
+                        _, _, _, s_title, s_desc = active_sections[sec_idx]
                         self.status_message = f"{s_title}: {s_desc}"
                     return
 
@@ -2355,7 +2485,10 @@ class MecaTUI:
             if btn == 0:
                 if y == 1:
                     if x >= cols - 15:
-                        self.running = False
+                        if self.view_mode == "theme_creator":
+                            self.cancel_changes()
+                        else:
+                            self.running = False
                     return
 
                 btn_y_min, btn_y_max = self._button_row_range
@@ -2382,7 +2515,10 @@ class MecaTUI:
 
                 if y == rows:
                     if x > cols - 15:
-                        self.running = False
+                        if self.view_mode == "theme_creator":
+                            self.cancel_changes()
+                        else:
+                            self.running = False
                     elif x <= 16:
                         if self.active_pane == "sidebar":
                             self.active_pane = "content"
@@ -2432,7 +2568,6 @@ class MecaTUI:
                                     new_val = round(new_val, 2)
                                 new_val = max(item.min_val, min(item.max_val, new_val))
                                 self._set_item_value(item.key, new_val)
-                                self._apply_hyprctl_live(item.key, new_val)
 
                         elif item.item_type == "action":
                             c_start, c_end = info["control_range"]
@@ -2458,7 +2593,6 @@ class MecaTUI:
                             new_val = round(new_val, 2)
                         new_val = max(item.min_val, min(item.max_val, new_val))
                         self._set_item_value(item.key, new_val)
-                        self._apply_hyprctl_live(item.key, new_val)
 
             # 3. Rueda del ratón hacia arriba (Scroll Up: btn == 64)
             elif btn == 64:
@@ -2485,8 +2619,9 @@ class MecaTUI:
                         self._move_content_selection(1)
 
     def _adjust_current_item(self, delta: int) -> None:
-        """Modifica el valor del elemento seleccionado con flechas izquierda/derecha."""
-        sec_id = self.SECTIONS[self.current_section_idx][1]
+        """Modifica el valor del elemento seleccionado en memoria (se aplicará al pulsar 'Aplicar')."""
+        active_sections = self._get_active_sections()
+        sec_id = active_sections[self.current_section_idx][1]
         items = self.section_items.get(sec_id, [])
         if not items or self.selected_item_idx >= len(items):
             return
@@ -2500,27 +2635,28 @@ class MecaTUI:
                 new_val = round(new_val, 2)
             new_val = max(item.min_val, min(item.max_val, new_val))
             self._set_item_value(item.key, new_val)
-            self._apply_hyprctl_live(item.key, new_val)
 
         elif item.item_type == "select" and item.options:
+            valid_opts = [o for o in item.options if o not in ("Escribir #Hex...", "Escribir ruta...")]
+            if not valid_opts:
+                return
             cur = str(self._get_item_value(item))
             try:
-                idx = item.options.index(cur)
+                idx = valid_opts.index(cur)
             except ValueError:
                 idx = 0
-            next_idx = (idx + delta) % len(item.options)
-            chosen = item.options[next_idx]
+            next_idx = (idx + delta) % len(valid_opts)
+            chosen = valid_opts[next_idx]
             self._set_item_value(item.key, chosen)
-            self._apply_hyprctl_live(item.key, chosen)
 
         elif item.item_type == "toggle":
             cur = bool(self._get_item_value(item))
             self._set_item_value(item.key, not cur)
-            self._apply_hyprctl_live(item.key, not cur)
 
     def _activate_current_item(self) -> None:
         """Ejecuta la acción, abre el menú desplegable (en 'select') o conmuta el toggle del elemento seleccionado."""
-        sec_id = self.SECTIONS[self.current_section_idx][1]
+        active_sections = self._get_active_sections()
+        sec_id = active_sections[self.current_section_idx][1]
         items = self.section_items.get(sec_id, [])
         if not items or self.selected_item_idx >= len(items):
             return
@@ -2530,14 +2666,28 @@ class MecaTUI:
         if item.item_type == "toggle":
             self._adjust_current_item(delta=1)
         elif item.item_type == "select":
-            # Abrir menú desplegable en la fila correspondiente
             row_y = 5 + (self.selected_item_idx - self.content_scroll_offset) * 3
             self._open_dropdown_for_item(item, anchor_y=row_y, anchor_x=45)
         elif item.item_type in ("action", "theme_card"):
             self._execute_action(item.key)
 
     def _set_item_value(self, key: str, val: Any) -> None:
-        """Guarda el valor en la estructura de ajustes en memoria."""
+        """Guarda el valor en la estructura de ajustes en memoria (sin aplicar en vivo hasta pulsar 'Aplicar')."""
+        if key.startswith("creator:"):
+            field = key.split(":", 1)[1]
+            if field == "base_theme":
+                cur_name = str(self.theme_creator_spec.get("name", "mi-tema-omarchy"))
+                new_spec = self.theme_engine.get_theme_full_spec(str(val))
+                new_spec["name"] = cur_name
+                new_spec["base_theme"] = str(val)
+                self.theme_creator_spec.update(new_spec)
+                self.status_message = f"Plantilla base '{val}' cargada en el estudio de creacion."
+            elif field == "widget_alpha":
+                self.theme_creator_spec["widget_alpha"] = float(val)
+            else:
+                self.theme_creator_spec[field] = str(val)
+            return
+
         if key.startswith("autostart:item:"):
             idx = int(key.split(":")[-1])
             if 0 <= idx < len(self.autostart_items):
@@ -2548,8 +2698,7 @@ class MecaTUI:
         if key.startswith("bar_widget:"):
             s_key = key.split(":", 1)[1]
             self.settings[s_key] = str(val)
-            self.config_sync.save_bar_settings(self.settings, reload_shell=True)
-            self.status_message = f"✓ Widget actualizado a '{val}' en la barra superior."
+            self.status_message = f"Widget '{val}' seleccionado (Pulsa 'Aplicar' para guardar)."
             return
 
         if key == "input:kb_variant":
@@ -2586,150 +2735,19 @@ class MecaTUI:
             return
 
         if key == "omarchy:theme":
-            self.status_message = f"Aplicando tema {val}..."
-            self.render()
-            self.theme_engine.set_theme(str(val))
-            self._sync_theme_into_settings()
-            self.saved_settings.update({
-                "omarchy_theme_name": self.settings["omarchy_theme_name"],
-                "omarchy_theme_mode": self.settings["omarchy_theme_mode"],
-                "omarchy_theme_accent": self.settings["omarchy_theme_accent"],
-                "omarchy_theme_bg": self.settings["omarchy_theme_bg"],
-                "omarchy_theme_fg": self.settings["omarchy_theme_fg"],
-                "omarchy_theme_sel": self.settings["omarchy_theme_sel"],
-                "omarchy_icons": self.settings["omarchy_icons"],
-            })
-            self.section_items = self._init_section_items()
-            self.status_message = f"✓ Tema {val} activado."
+            self.settings["omarchy_theme_name"] = str(val)
+            self.section_items["themes"] = self._build_themes_section_items()
+            self.status_message = f"Tema '{val}' seleccionado (Pulsa 'Aplicar' para activarlo)."
             return
 
         if key in self.KEY_TO_SETTING:
             s_key, caster, _ = self.KEY_TO_SETTING[key]
             self.settings[s_key] = caster(val)
-
-            # Si es una propiedad de la barra superior, aplicar en vivo sobre shell.json
-            if key.startswith("bar:"):
-                self.config_sync.save_bar_settings(self.settings, reload_shell=True)
-                self.status_message = "✓ Configuracion de la barra superior actualizada."
-                return
-
-            # Previsualizar en vivo el cambio de color en el motor TUI
-            if key == "omarchy:theme_accent":
-                self.theme_engine._colors["accent"] = str(val)
-                self.theme_engine.update_derived_colors()
-            elif key == "omarchy:theme_bg":
-                self.theme_engine._colors["background"] = str(val)
-                self.theme_engine.update_derived_colors()
-            elif key == "omarchy:theme_fg":
-                self.theme_engine._colors["foreground"] = str(val)
-                self.theme_engine._colors["bright_foreground"] = str(val)
-                self.theme_engine.update_derived_colors()
-            elif key == "omarchy:theme_sel":
-                self.theme_engine._colors["selection"] = str(val)
-                self.theme_engine.update_derived_colors()
         else:
             self.settings[key] = val
 
-    def _apply_hyprctl_live(self, key: str, val: Any) -> None:
-        """Aplica la variable en caliente a Hyprland si corresponde."""
-        direct_hypr_keys = {
-            "general:gaps_in",
-            "general:gaps_out",
-            "general:border_size",
-            "general:resize_on_border",
-            "general:extend_border_grab_area",
-            "general:hover_icon_on_border",
-            "general:layout",
-            "general:allow_tearing",
-            "general:no_focus_fallback",
-            "general:snap:enabled",
-            "general:snap:window_gap",
-            "general:snap:monitor_gap",
-            "general:snap:border_overlap",
-            "decoration:rounding",
-            "decoration:rounding_power",
-            "decoration:active_opacity",
-            "decoration:inactive_opacity",
-            "decoration:fullscreen_opacity",
-            "decoration:dim_inactive",
-            "decoration:dim_strength",
-            "decoration:dim_special",
-            "decoration:blur:enabled",
-            "decoration:blur:size",
-            "decoration:blur:passes",
-            "decoration:blur:new_optimizations",
-            "decoration:blur:xray",
-            "decoration:blur:ignore_opacity",
-            "decoration:blur:vibrancy",
-            "decoration:shadow:enabled",
-            "decoration:shadow:range",
-            "decoration:shadow:render_power",
-            "decoration:shadow:sharp",
-            "animations:enabled",
-            "animations:workspace_wraparound",
-            "cursor:no_hardware_cursors",
-            "cursor:inactive_timeout",
-            "cursor:hide_on_key_press",
-            "cursor:hide_on_touch",
-            "cursor:warp_on_change_workspace",
-            "cursor:zoom_factor",
-            "cursor:zoom_rigid",
-            "input:kb_layout",
-            "input:repeat_rate",
-            "input:repeat_delay",
-            "input:numlock_by_default",
-            "input:follow_mouse",
-            "input:mouse_refocus",
-            "input:sensitivity",
-            "input:accel_profile",
-            "input:left_handed",
-            "input:touchpad:natural_scroll",
-            "input:touchpad:scroll_factor",
-            "input:touchpad:clickfinger_behavior",
-            "input:touchpad:tap-to-click",
-            "input:touchpad:disable_while_typing",
-            "input:touchpad:drag_3fg",
-            "dwindle:force_split",
-            "dwindle:preserve_split",
-            "dwindle:smart_split",
-            "dwindle:smart_resizing",
-            "dwindle:default_split_ratio",
-            "master:new_status",
-            "master:mfact",
-            "master:orientation",
-            "scrolling:column_width",
-            "group:groupbar:enabled",
-            "group:groupbar:font_size",
-            "group:groupbar:height",
-            "group:groupbar:gradients",
-        }
-        mapped_keys = {
-            "binds:hide_special": "binds:hide_special_on_workspace_change",
-            "binds:workspace_back_forth": "binds:workspace_back_and_forth",
-            "binds:allow_cycles": "binds:allow_workspace_cycles",
-            "input:mouse_natural_scroll": "input:natural_scroll",
-            "misc:focus_on_activate": "misc:focus_on_activate",
-            "misc:dpms_key": "misc:key_press_enables_dpms",
-            "misc:dpms_mouse": "misc:mouse_move_enables_dpms",
-            "misc:focus_under_fs": "misc:on_focus_under_fullscreen",
-            "misc:animate_resizes": "misc:animate_manual_resizes",
-            "misc:animate_dragging": "misc:animate_mouse_windowdragging",
-            "dwindle:split_ratio": "dwindle:default_split_ratio",
-            "display:xwayland_zero_scaling": "xwayland:force_zero_scaling",
-        }
-        if key in direct_hypr_keys:
-            HyprIPC.set_keyword(key, val)
-        elif key in mapped_keys:
-            HyprIPC.set_keyword(mapped_keys[key], val)
-        elif key == "input:kb_variant":
-            HyprIPC.set_keyword("input:kb_variant", "" if str(val) == "none" else str(val))
-        elif key == "display:vrr":
-            first_ch = str(val).strip()[0]
-            if first_ch.isdigit():
-                HyprIPC.set_keyword("misc:vrr", int(first_ch))
-
     def _execute_action(self, action_key: str) -> None:
-        """Ejecuta acciones especiales como modales de autostart, creación/gestión de temas Omarchy o utilidades."""
+        """Ejecuta acciones especiales como modales de autostart, estudio de creación de temas o utilidades."""
         if action_key == "action:add_autostart":
             self.installed_apps = self.config_sync.list_installed_applications()
             self.modal_state = "input_autostart"
@@ -2743,31 +2761,47 @@ class MecaTUI:
             return
 
         elif action_key == "action:create_theme":
-            self.modal_state = "create_theme"
-            self.modal_base_theme = self.theme_engine.current_theme
-            self.modal_theme_mode = self.theme_engine.mode
-            self.modal_input_text = ""
-            self.modal_selected_idx = 1
+            self._prev_main_section_idx = self.current_section_idx
+            base_t = self.theme_engine.current_theme
+            self.theme_creator_spec = self.theme_engine.get_theme_full_spec(base_t)
+            self.theme_creator_spec["name"] = "mi-tema-omarchy"
+            self.theme_creator_spec["base_theme"] = base_t
+            for _, c_sec_id, _, _, _ in self.CREATOR_SECTIONS:
+                self.section_items[c_sec_id] = self._build_creator_section_items(c_sec_id)
+            self.view_mode = "theme_creator"
+            self.current_section_idx = 0
+            self.selected_item_idx = 1
+            self.content_scroll_offset = 0
+            self.active_pane = "content"
+            self.status_message = "Estudio de Creacion de Temas: Configura los aspectos y pulsa 'Aplicar'."
             return
 
         elif action_key == "action:clone_theme":
-            self.modal_state = "create_theme"
-            self.modal_base_theme = self.theme_engine.current_theme
-            self.modal_theme_mode = self.theme_engine.mode
-            self.modal_input_text = f"{self.theme_engine.current_theme}-custom"
+            self._prev_main_section_idx = self.current_section_idx
+            base_t = self.theme_engine.current_theme
+            self.theme_creator_spec = self.theme_engine.get_theme_full_spec(base_t)
+            self.theme_creator_spec["name"] = f"{base_t}-custom"
+            self.theme_creator_spec["base_theme"] = base_t
+            for _, c_sec_id, _, _, _ in self.CREATOR_SECTIONS:
+                self.section_items[c_sec_id] = self._build_creator_section_items(c_sec_id)
+            self.view_mode = "theme_creator"
+            self.current_section_idx = 0
+            self.selected_item_idx = 1
+            self.content_scroll_offset = 0
+            self.active_pane = "content"
+            self.status_message = f"Duplicando '{base_t}': Personaliza los parametros y pulsa 'Aplicar'."
+            return
+
+        elif action_key == "creator:name":
+            self.modal_state = "input_creator_text"
+            self.modal_text_target = "creator:name"
+            self.modal_input_text = str(self.theme_creator_spec.get("name", "mi-tema-omarchy"))
             self.modal_selected_idx = 1
             return
 
         elif action_key.startswith("user_theme:item:"):
             target_slug = action_key.split(":", 2)[-1]
             self._set_item_value("omarchy:theme", target_slug)
-            return
-
-        elif action_key == "action:custom_theme_hex":
-            self.modal_state = "input_theme_hex"
-            self.modal_hex_target = "accent"
-            self.modal_input_text = str(self.settings.get("omarchy_theme_accent", "#E31B23"))
-            self.modal_selected_idx = 1
             return
 
         elif action_key == "action:reset_bar_defaults":
@@ -2856,59 +2890,60 @@ class MecaTUI:
             except Exception:
                 self.status_message = "No se encontró el comando 'omarchy-toggle-nightlight'."
 
-        elif action_key == "action:apply_lizarbe_full":
-            self.status_message = "Aplicando configuración Lizarbe..."
-            self.render()
-            LizarbeManager.apply_lizarbe_theme("lizarbe")
-            LizarbeManager.ensure_fastfetch_logo()
-            self.config_sync.fix_caps_lock(use_ralt=True)
-            self.install_update_hook()
-            self.theme_engine.reload()
-            self._sync_theme_into_settings()
-            self.saved_settings = dict(self.settings)
-            self.status_message = "✓ Setup Lizarbe aplicado correctamente."
-
-        elif action_key == "action:install_hook":
-            self.install_update_hook()
-
-    def _has_theme_edits(self) -> bool:
-        """Verifica si se editaron propiedades del tema Omarchy activo."""
-        theme_keys = (
-            "omarchy_theme_mode",
-            "omarchy_theme_accent",
-            "omarchy_theme_bg",
-            "omarchy_theme_fg",
-            "omarchy_theme_sel",
-            "omarchy_icons",
+    def _has_bar_changes(self) -> bool:
+        """Verifica si se modificaron opciones de la barra superior de Omarchy."""
+        return any(
+            k.startswith("bar_") and self.settings.get(k) != self.saved_settings.get(k)
+            for k in self.settings
         )
-        return any(self.settings.get(k) != self.saved_settings.get(k) for k in theme_keys)
 
     def save_all(self) -> None:
-        """Aplica y guarda todas las opciones en hyprland-gui.lua, autostart.lua, shell.json y tema Omarchy."""
+        """
+        En la ventana de creación de temas ('theme_creator'), construye y activa el nuevo tema Omarchy.
+        En la ventana principal ('main'), aplica y guarda todos los cambios en Hyprland, autostart,
+        barra superior y tema Omarchy seleccionado.
+        """
+        if self.view_mode == "theme_creator":
+            self.status_message = "Creando y aplicando nuevo tema Omarchy..."
+            self.render()
+            ok, msg = self.theme_engine.create_theme_from_spec(self.theme_creator_spec, apply_now=True)
+            if ok:
+                self._sync_theme_into_settings()
+                self.saved_settings.update({
+                    "omarchy_theme_name": self.settings["omarchy_theme_name"],
+                    "omarchy_theme_mode": self.settings["omarchy_theme_mode"],
+                    "omarchy_theme_accent": self.settings["omarchy_theme_accent"],
+                    "omarchy_theme_bg": self.settings["omarchy_theme_bg"],
+                    "omarchy_theme_fg": self.settings["omarchy_theme_fg"],
+                    "omarchy_theme_sel": self.settings["omarchy_theme_sel"],
+                    "omarchy_icons": self.settings["omarchy_icons"],
+                })
+                self.view_mode = "main"
+                self.section_items = self._init_section_items()
+                self.current_section_idx = self._prev_main_section_idx
+                self.selected_item_idx = 0
+                self.content_scroll_offset = 0
+                self.status_message = f"✓ {msg}"
+            else:
+                self.status_message = f"Error: {msg}"
+            return
+
         ok_gui = self.config_sync.save_gui_settings(self.settings, apply_live=True)
         ok_auto = self.config_sync.save_autostart_items(self.autostart_items)
+
+        if self._has_bar_changes():
+            self.config_sync.save_bar_settings(self.settings, reload_shell=True)
 
         if self.settings.get("compose_key") != self.saved_settings.get("compose_key"):
             self.config_sync.fix_caps_lock(use_ralt=(self.settings.get("compose_key", "ralt") == "ralt"))
 
-        if self._has_theme_edits():
-            self.status_message = "Actualizando tema Omarchy activo y original..."
+        if self.settings.get("omarchy_theme_name") != self.saved_settings.get("omarchy_theme_name"):
+            chosen_theme = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
+            self.status_message = f"Activando tema Omarchy '{chosen_theme}'..."
             self.render()
-            theme_updates = {
-                "mode": str(self.settings.get("omarchy_theme_mode", self.theme_engine.mode)),
-                "accent": str(self.settings.get("omarchy_theme_accent", "#E31B23")),
-                "background": str(self.settings.get("omarchy_theme_bg", "#08080B")),
-                "foreground": str(self.settings.get("omarchy_theme_fg", "#d8d8d8")),
-                "bright_foreground": str(self.settings.get("omarchy_theme_fg", "#d8d8d8")),
-                "selection": str(self.settings.get("omarchy_theme_sel", "#45475a")),
-            }
-            self.theme_engine.save_theme_edits(
-                theme_name=self.theme_engine.current_theme,
-                updates=theme_updates,
-                icon_theme=str(self.settings.get("omarchy_icons", self.theme_engine.icon_theme)),
-                refresh_live=True,
-            )
+            self.theme_engine.set_theme(chosen_theme)
             self._sync_theme_into_settings()
+            self.section_items = self._init_section_items()
 
         if ok_gui and ok_auto:
             self.saved_settings = dict(self.settings)
@@ -2918,12 +2953,20 @@ class MecaTUI:
             self.status_message = "Error al aplicar la configuracion."
 
     def cancel_changes(self) -> None:
-        """Revierte cualquier cambio sin aplicar y cierra la ventana de la aplicación."""
-        if self.has_unsaved_changes():
-            self.settings = dict(self.saved_settings)
-            self.autostart_items = [dict(x) for x in self.saved_autostart]
-            self.config_sync.save_gui_settings(self.settings, apply_live=True)
-            self.config_sync.save_autostart_items(self.autostart_items)
+        """
+        En la ventana de creación de temas ('theme_creator'), regresa a la ventana principal.
+        En la ventana principal ('main'), descarta los cambios en memoria y cierra la aplicación.
+        """
+        if self.view_mode == "theme_creator":
+            self.view_mode = "main"
+            self.current_section_idx = self._prev_main_section_idx
+            self.selected_item_idx = 0
+            self.content_scroll_offset = 0
+            self.status_message = "Creacion de tema cancelada."
+            return
+
+        self.settings = dict(self.saved_settings)
+        self.autostart_items = [dict(x) for x in self.saved_autostart]
         self.running = False
 
     def reset_to_defaults(self) -> None:
@@ -2933,6 +2976,15 @@ class MecaTUI:
 
     def _perform_reset_to_defaults(self) -> None:
         """Ejecuta el restablecimiento real tras la confirmación del usuario."""
+        if self.view_mode == "theme_creator":
+            base_t = str(self.theme_creator_spec.get("base_theme", self.theme_engine.current_theme))
+            cur_name = str(self.theme_creator_spec.get("name", "mi-tema-omarchy"))
+            self.theme_creator_spec = self.theme_engine.get_theme_full_spec(base_t)
+            self.theme_creator_spec["name"] = cur_name
+            self.theme_creator_spec["base_theme"] = base_t
+            self.status_message = f"✓ Parametros del tema restablecidos a la plantilla '{base_t}'."
+            return
+
         defaults = self.config_sync.get_default_settings()
         self.settings.update(defaults)
         self._sync_theme_into_settings()
@@ -2965,3 +3017,4 @@ exit 0
             self.status_message = "✓ Hook instalado en ~/.config/omarchy/hooks/post-update.d/99-meca-hyprconfig.sh."
         except Exception:
             self.status_message = "Error al instalar el hook."
+
