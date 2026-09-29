@@ -52,13 +52,52 @@ class HyprIPC:
         return []
 
     @classmethod
+    def get_active_window(cls) -> Optional[Dict[str, Any]]:
+        """Obtiene la información JSON de la ventana actualmente enfocada."""
+        out = cls.run_hyprctl(["activewindow", "-j"])
+        if out:
+            try:
+                return json.loads(out)
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    @classmethod
+    def ensure_floating_centered(cls, width: int = 960, height: int = 680) -> bool:
+        """
+        Convierte la ventana actual en una ventana flotante y centrada del tamaño indicado.
+        Retorna True si la ventana era originalmente de mosaico (tiled) y fue pasada a flotante.
+        """
+        win = cls.get_active_window()
+        if not win:
+            return False
+
+        was_tiled = not bool(win.get("floating", False))
+        if was_tiled:
+            cls.run_hyprctl([
+                "--batch",
+                f"dispatch setfloating ; dispatch resizeactive exact {width} {height} ; dispatch centerwindow",
+            ])
+        else:
+            cls.run_hyprctl([
+                "--batch",
+                f"dispatch resizeactive exact {width} {height} ; dispatch centerwindow",
+            ])
+        return was_tiled
+
+    @classmethod
+    def restore_tiled(cls) -> None:
+        """Devuelve la ventana activa a modo mosaico (tiled)."""
+        cls.run_hyprctl(["dispatch", "settiled"])
+
+    @classmethod
     def get_option(cls, option_name: str) -> Optional[Any]:
         """Obtiene el valor actual de una opción de Hyprland."""
         out = cls.run_hyprctl(["getoption", option_name, "-j"])
         if out:
             try:
                 data = json.loads(out)
-                for field in ["int", "float", "bool", "str", "css"]:
+                for field in ["int", "float", "bool", "str", "css", "custom"]:
                     if field in data:
                         return data[field]
                 return data

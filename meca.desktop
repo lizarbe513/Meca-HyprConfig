@@ -2,7 +2,7 @@
 Name=Meca HyprConfig
 GenericName=Configurador de Hyprland
 Comment=Panel TUI monolítico para configurar Hyprland y Omarchy
-Exec=xdg-terminal-exec meca
+Exec=omarchy-launch-tui --app-id=TUI.float meca
 Icon=preferences-system
 Terminal=false
 Type=Application

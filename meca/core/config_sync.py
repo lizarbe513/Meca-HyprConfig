@@ -1,13 +1,12 @@
 """
 Módulo de Sincronización y Persistencia de Configuraciones en Archivos Lua de Hyprland.
-Garantiza persistencia sin romper actualizaciones del sistema Omarchy.
+Garantiza persistencia completa en hyprland-gui.lua, autostart.lua, input.lua y monitors.lua.
 """
 
 from __future__ import annotations
-import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List
 from meca.core.hypr_ipc import HyprIPC
 
 
@@ -17,6 +16,7 @@ class ConfigSync:
         self.gui_file = self.hypr_dir / "hyprland-gui.lua"
         self.input_file = self.hypr_dir / "input.lua"
         self.monitors_file = self.hypr_dir / "monitors.lua"
+        self.autostart_file = self.hypr_dir / "autostart.lua"
         self.ensure_paths()
 
     def ensure_paths(self) -> None:
@@ -24,98 +24,219 @@ class ConfigSync:
         self.hypr_dir.mkdir(parents=True, exist_ok=True)
 
     def load_gui_settings(self) -> Dict[str, Any]:
-        """Carga los ajustes actuales desde hyprctl y del archivo hyprland-gui.lua."""
-        settings = {
+        """Carga los ajustes actuales desde hyprctl y desde hyprland-gui.lua."""
+        settings: Dict[str, Any] = {
             "gaps_in": 5,
             "gaps_out": 10,
             "border_size": 2,
-            "rounding": 8,
+            "resize_on_border": True,
+            "layout": "dwindle",
+            "allow_tearing": False,
+            "snap_enabled": False,
+            "rounding": 0,
+            "active_opacity": 1.0,
+            "inactive_opacity": 0.95,
             "dim_inactive": False,
+            "dim_strength": 0.15,
+            "blur_enabled": True,
+            "blur_size": 5,
+            "blur_passes": 2,
+            "shadow_enabled": True,
             "animations_enabled": True,
             "animation_preset": "smooth",
+            "anim_windows": "popin 80%",
+            "anim_workspaces": "slide",
+            "no_hw_cursors": False,
+            "cursor_timeout": 0,
+            "cursor_zoom": 1.0,
+            "repeat_rate": 40,
+            "repeat_delay": 250,
+            "numlock": True,
             "sensitivity": 0.0,
             "accel_profile": "flat",
             "natural_scroll": False,
-            "layout": "dwindle",
-            "compose_key": "ralt",  # ralt = Alt Gr (libera Bloq Mayús)
+            "clickfinger": True,
+            "tap_to_click": True,
+            "disable_typing": True,
+            "workspace_swipe": True,
+            "workspace_count": 5,
+            "workspace_layout": "dwindle",
+            "dwindle_pseudotile": True,
+            "dwindle_preserve_split": True,
+            "dwindle_smart_split": False,
+            "master_new_status": "slave",
+            "rules_pavucontrol_float": True,
+            "rules_calculator_float": True,
+            "compose_key": "ralt",
         }
 
-        # Extraer valores reales de Hyprland si está activo
-        val = HyprIPC.get_option("general:border_size")
-        if val is not None:
-            settings["border_size"] = int(val)
+        # Consultar opciones en vivo de Hyprland
+        live_int_map = {
+            "general:border_size": "border_size",
+            "decoration:rounding": "rounding",
+            "decoration:blur:size": "blur_size",
+            "decoration:blur:passes": "blur_passes",
+            "cursor:inactive_timeout": "cursor_timeout",
+            "input:repeat_rate": "repeat_rate",
+            "input:repeat_delay": "repeat_delay",
+        }
+        for hypr_k, s_k in live_int_map.items():
+            val = HyprIPC.get_option(hypr_k)
+            if isinstance(val, int):
+                settings[s_k] = int(val)
 
-        val = HyprIPC.get_option("decoration:rounding")
-        if val is not None:
-            settings["rounding"] = int(val)
+        live_bool_map = {
+            "general:resize_on_border": "resize_on_border",
+            "general:allow_tearing": "allow_tearing",
+            "general:snap:enabled": "snap_enabled",
+            "decoration:dim_inactive": "dim_inactive",
+            "decoration:blur:enabled": "blur_enabled",
+            "decoration:shadow:enabled": "shadow_enabled",
+            "animations:enabled": "animations_enabled",
+            "cursor:no_hardware_cursors": "no_hw_cursors",
+            "input:numlock_by_default": "numlock",
+            "input:touchpad:natural_scroll": "natural_scroll",
+            "input:touchpad:clickfinger_behavior": "clickfinger",
+            "input:touchpad:tap-to-click": "tap_to_click",
+            "input:touchpad:disable_while_typing": "disable_typing",
+            "dwindle:pseudotile": "dwindle_pseudotile",
+            "dwindle:preserve_split": "dwindle_preserve_split",
+            "dwindle:smart_split": "dwindle_smart_split",
+        }
+        for hypr_k, s_k in live_bool_map.items():
+            val = HyprIPC.get_option(hypr_k)
+            if val is not None and isinstance(val, (bool, int)):
+                settings[s_k] = bool(val)
 
-        val = HyprIPC.get_option("decoration:dim_inactive")
-        if val is not None:
-            settings["dim_inactive"] = bool(val)
+        live_float_map = {
+            "decoration:active_opacity": "active_opacity",
+            "decoration:inactive_opacity": "inactive_opacity",
+            "decoration:dim_strength": "dim_strength",
+            "cursor:zoom_factor": "cursor_zoom",
+            "input:sensitivity": "sensitivity",
+        }
+        for hypr_k, s_k in live_float_map.items():
+            val = HyprIPC.get_option(hypr_k)
+            if val is not None:
+                try:
+                    settings[s_k] = round(float(val), 2)
+                except (ValueError, TypeError):
+                    pass
 
-        val = HyprIPC.get_option("animations:enabled")
-        if val is not None:
-            settings["animations_enabled"] = bool(val)
+        live_str_map = {
+            "general:layout": "layout",
+            "input:accel_profile": "accel_profile",
+            "master:new_status": "master_new_status",
+        }
+        for hypr_k, s_k in live_str_map.items():
+            val = HyprIPC.get_option(hypr_k)
+            if isinstance(val, str) and val.strip():
+                settings[s_k] = val.strip()
 
-        val = HyprIPC.get_option("input:sensitivity")
-        if val is not None:
-            try:
-                settings["sensitivity"] = float(val)
-            except ValueError:
-                pass
+        # Parsear gaps (pueden venir como "5 5 5 5" en custom)
+        for hypr_k, s_k in [("general:gaps_in", "gaps_in"), ("general:gaps_out", "gaps_out")]:
+            g_val = HyprIPC.get_option(hypr_k)
+            if isinstance(g_val, int):
+                settings[s_k] = g_val
+            elif isinstance(g_val, str):
+                first = g_val.split()[0] if g_val.split() else ""
+                if first.isdigit():
+                    settings[s_k] = int(first)
 
-        val = HyprIPC.get_option("input:touchpad:natural_scroll")
-        if val is not None:
-            settings["natural_scroll"] = bool(val)
-
-        # Parsear gaps si es posible
-        g_in = HyprIPC.get_option("general:gaps_in")
-        if g_in and isinstance(g_in, str):
-            first = g_in.split()[0]
-            if first.isdigit():
-                settings["gaps_in"] = int(first)
-
-        g_out = HyprIPC.get_option("general:gaps_out")
-        if g_out and isinstance(g_out, str):
-            first = g_out.split()[0]
-            if first.isdigit():
-                settings["gaps_out"] = int(first)
+        # Verificar compose_key en input.lua o hyprctl
+        kb_opts = HyprIPC.get_option("input:kb_options")
+        if isinstance(kb_opts, str):
+            if "compose:caps" in kb_opts:
+                settings["compose_key"] = "caps"
+            elif "compose:ralt" in kb_opts:
+                settings["compose_key"] = "ralt"
 
         return settings
 
+    @staticmethod
+    def _b(val: Any) -> str:
+        return "true" if bool(val) else "false"
+
     def save_gui_settings(self, settings: Dict[str, Any], apply_live: bool = True) -> bool:
-        """Escribe los ajustes en ~/.config/hypr/hyprland-gui.lua y los aplica en vivo."""
-        dim_str = "true" if settings.get("dim_inactive", False) else "false"
-        anim_str = "true" if settings.get("animations_enabled", True) else "false"
-        nat_str = "true" if settings.get("natural_scroll", False) else "false"
-        
+        """Escribe todos los ajustes en ~/.config/hypr/hyprland-gui.lua y los aplica en vivo."""
+        b = self._b
+        pavu_rule = (
+            '\nif o and o.window then\n  o.window("(org.pulseaudio.pavucontrol|pavucontrol)", { float = true, center = true, size = { 760, 520 } })\nend\n'
+            if settings.get("rules_pavucontrol_float", True)
+            else ""
+        )
+        calc_rule = (
+            'if o and o.window then\n  o.window("(org.gnome.Calculator|qalculate-gtk|omacalc)", { float = true, center = true })\nend\n'
+            if settings.get("rules_calculator_float", True)
+            else ""
+        )
+
         lua_content = f"""-- Generado automáticamente por Meca HyprConfig (MECA)
 -- No modificar manualmente este bloque si utilizas el panel TUI.
 
 hl.config({{
   general = {{
-    gaps_in = {settings.get('gaps_in', 5)},
-    gaps_out = {settings.get('gaps_out', 10)},
-    border_size = {settings.get('border_size', 2)},
+    gaps_in = {int(settings.get('gaps_in', 5))},
+    gaps_out = {int(settings.get('gaps_out', 10))},
+    border_size = {int(settings.get('border_size', 2))},
+    resize_on_border = {b(settings.get('resize_on_border', True))},
+    allow_tearing = {b(settings.get('allow_tearing', False))},
     layout = "{settings.get('layout', 'dwindle')}",
-  }},
-  decoration = {{
-    rounding = {settings.get('rounding', 8)},
-    dim_inactive = {dim_str},
-    dim_strength = 0.15,
-  }},
-  animations = {{
-    enabled = {anim_str},
-  }},
-  input = {{
-    sensitivity = {settings.get('sensitivity', 0.0):.2f},
-    accel_profile = "{settings.get('accel_profile', 'flat')}",
-    touchpad = {{
-      natural_scroll = {nat_str},
+    snap = {{
+      enabled = {b(settings.get('snap_enabled', False))},
     }},
   }},
+  decoration = {{
+    rounding = {int(settings.get('rounding', 0))},
+    active_opacity = {float(settings.get('active_opacity', 1.0)):.2f},
+    inactive_opacity = {float(settings.get('inactive_opacity', 0.95)):.2f},
+    dim_inactive = {b(settings.get('dim_inactive', False))},
+    dim_strength = {float(settings.get('dim_strength', 0.15)):.2f},
+    blur = {{
+      enabled = {b(settings.get('blur_enabled', True))},
+      size = {int(settings.get('blur_size', 5))},
+      passes = {int(settings.get('blur_passes', 2))},
+    }},
+    shadow = {{
+      enabled = {b(settings.get('shadow_enabled', True))},
+    }},
+  }},
+  animations = {{
+    enabled = {b(settings.get('animations_enabled', True))},
+  }},
+  cursor = {{
+    no_hardware_cursors = {b(settings.get('no_hw_cursors', False))},
+    inactive_timeout = {int(settings.get('cursor_timeout', 0))},
+    zoom_factor = {float(settings.get('cursor_zoom', 1.0)):.2f},
+  }},
+  input = {{
+    repeat_rate = {int(settings.get('repeat_rate', 40))},
+    repeat_delay = {int(settings.get('repeat_delay', 250))},
+    numlock_by_default = {b(settings.get('numlock', True))},
+    sensitivity = {float(settings.get('sensitivity', 0.0)):.2f},
+    accel_profile = "{settings.get('accel_profile', 'flat')}",
+    touchpad = {{
+      natural_scroll = {b(settings.get('natural_scroll', False))},
+      clickfinger_behavior = {b(settings.get('clickfinger', True))},
+      ["tap-to-click"] = {b(settings.get('tap_to_click', True))},
+      disable_while_typing = {b(settings.get('disable_typing', True))},
+    }},
+  }},
+  dwindle = {{
+    pseudotile = {b(settings.get('dwindle_pseudotile', True))},
+    preserve_split = {b(settings.get('dwindle_preserve_split', True))},
+    smart_split = {b(settings.get('dwindle_smart_split', False))},
+  }},
+  master = {{
+    new_status = "{settings.get('master_new_status', 'slave')}",
+  }},
 }})
-"""
+
+-- Regla de ventana flotante y centrada para Meca HyprConfig
+if o and o.window then
+  o.window("(org.omarchy.meca|meca-hyprconfig|TUI.float)", {{ float = true, center = true, size = {{ 960, 680 }} }})
+end
+{pavu_rule}{calc_rule}"""
         try:
             with open(self.gui_file, "w", encoding="utf-8") as f:
                 f.write(lua_content)
@@ -128,17 +249,124 @@ hl.config({{
                     with open(hyprland_lua, "a", encoding="utf-8") as f:
                         f.write('\n-- HyprMod & Meca managed settings\nrequire("hyprland-gui")\n')
 
-            # Aplicar en vivo
+            # Aplicar en vivo mediante hyprctl
             if apply_live:
-                HyprIPC.set_keyword("general:gaps_in", settings.get("gaps_in", 5))
-                HyprIPC.set_keyword("general:gaps_out", settings.get("gaps_out", 10))
-                HyprIPC.set_keyword("general:border_size", settings.get("border_size", 2))
-                HyprIPC.set_keyword("decoration:rounding", settings.get("rounding", 8))
-                HyprIPC.set_keyword("decoration:dim_inactive", settings.get("dim_inactive", False))
-                HyprIPC.set_keyword("animations:enabled", settings.get("animations_enabled", True))
-                HyprIPC.set_keyword("input:sensitivity", settings.get("sensitivity", 0.0))
-                HyprIPC.set_keyword("input:touchpad:natural_scroll", settings.get("natural_scroll", False))
+                live_pairs = [
+                    ("general:gaps_in", settings.get("gaps_in", 5)),
+                    ("general:gaps_out", settings.get("gaps_out", 10)),
+                    ("general:border_size", settings.get("border_size", 2)),
+                    ("general:resize_on_border", settings.get("resize_on_border", True)),
+                    ("general:allow_tearing", settings.get("allow_tearing", False)),
+                    ("general:layout", settings.get("layout", "dwindle")),
+                    ("general:snap:enabled", settings.get("snap_enabled", False)),
+                    ("decoration:rounding", settings.get("rounding", 0)),
+                    ("decoration:active_opacity", settings.get("active_opacity", 1.0)),
+                    ("decoration:inactive_opacity", settings.get("inactive_opacity", 0.95)),
+                    ("decoration:dim_inactive", settings.get("dim_inactive", False)),
+                    ("decoration:dim_strength", settings.get("dim_strength", 0.15)),
+                    ("decoration:blur:enabled", settings.get("blur_enabled", True)),
+                    ("decoration:blur:size", settings.get("blur_size", 5)),
+                    ("decoration:blur:passes", settings.get("blur_passes", 2)),
+                    ("decoration:shadow:enabled", settings.get("shadow_enabled", True)),
+                    ("animations:enabled", settings.get("animations_enabled", True)),
+                    ("cursor:no_hardware_cursors", settings.get("no_hw_cursors", False)),
+                    ("cursor:inactive_timeout", settings.get("cursor_timeout", 0)),
+                    ("cursor:zoom_factor", settings.get("cursor_zoom", 1.0)),
+                    ("input:repeat_rate", settings.get("repeat_rate", 40)),
+                    ("input:repeat_delay", settings.get("repeat_delay", 250)),
+                    ("input:numlock_by_default", settings.get("numlock", True)),
+                    ("input:sensitivity", settings.get("sensitivity", 0.0)),
+                    ("input:accel_profile", settings.get("accel_profile", "flat")),
+                    ("input:touchpad:natural_scroll", settings.get("natural_scroll", False)),
+                    ("input:touchpad:clickfinger_behavior", settings.get("clickfinger", True)),
+                    ("input:touchpad:tap-to-click", settings.get("tap_to_click", True)),
+                    ("input:touchpad:disable_while_typing", settings.get("disable_typing", True)),
+                    ("dwindle:pseudotile", settings.get("dwindle_pseudotile", True)),
+                    ("dwindle:preserve_split", settings.get("dwindle_preserve_split", True)),
+                    ("dwindle:smart_split", settings.get("dwindle_smart_split", False)),
+                    ("master:new_status", settings.get("master_new_status", "slave")),
+                ]
+                for k, v in live_pairs:
+                    HyprIPC.set_keyword(k, v)
 
+            return True
+        except Exception:
+            return False
+
+    # =========================================================================
+    # GESTIÓN DE AUTOSTART (~/.config/hypr/autostart.lua)
+    # =========================================================================
+
+    def load_autostart_items(self) -> List[Dict[str, Any]]:
+        """
+        Lee ~/.config/hypr/autostart.lua y devuelve una lista de entradas:
+        [{"cmd": "...", "kind": "launch" | "exec", "enabled": bool}]
+        """
+        items: List[Dict[str, Any]] = []
+        seen_cmds = set()
+
+        if self.autostart_file.exists():
+            try:
+                lines = self.autostart_file.read_text(encoding="utf-8").splitlines()
+                pat = re.compile(
+                    r"^\s*(--\s*)?o\.(launch_on_start|exec_on_start)\(\s*[\"'](.+?)[\"']\s*\)"
+                )
+                for line in lines:
+                    m = pat.match(line)
+                    if m:
+                        is_commented = bool(m.group(1))
+                        fn_name = m.group(2)
+                        cmd = m.group(3).strip()
+                        # Ignorar el ejemplo genérico de plantilla "my-service"
+                        if cmd == "my-service":
+                            continue
+                        if cmd not in seen_cmds:
+                            seen_cmds.add(cmd)
+                            items.append({
+                                "cmd": cmd,
+                                "kind": "launch" if fn_name == "launch_on_start" else "exec",
+                                "enabled": not is_commented,
+                            })
+            except Exception:
+                pass
+
+        # Asegurar que algunas utilidades comunes aparezcan en la lista para fácil activación
+        default_suggestions = [
+            ("hyprsunset", "launch", False),
+            ("nm-applet --indicator", "launch", False),
+            ("blueman-applet", "launch", False),
+        ]
+        for s_cmd, s_kind, s_en in default_suggestions:
+            if s_cmd not in seen_cmds:
+                seen_cmds.add(s_cmd)
+                items.append({
+                    "cmd": s_cmd,
+                    "kind": s_kind,
+                    "enabled": s_en,
+                })
+
+        return items
+
+    def save_autostart_items(self, items: List[Dict[str, Any]]) -> bool:
+        """Escribe la lista de entradas de autostart en ~/.config/hypr/autostart.lua."""
+        out_lines = [
+            "-- Procesos, servicios y comandos de inicio gestionados por Meca HyprConfig.",
+            "-- Usa o.launch_on_start(\"app\") para aplicaciones/servicios y o.exec_on_start(\"cmd\") para comandos.",
+            "",
+        ]
+        for entry in items:
+            cmd = str(entry.get("cmd", "")).strip().replace('"', '\\"')
+            if not cmd:
+                continue
+            kind = entry.get("kind", "launch")
+            enabled = bool(entry.get("enabled", True))
+            fn = "o.launch_on_start" if kind == "launch" else "o.exec_on_start"
+            prefix = "" if enabled else "-- "
+            out_lines.append(f'{prefix}{fn}("{cmd}")')
+
+        out_lines.append("")
+        try:
+            self.autostart_file.write_text("\n".join(out_lines), encoding="utf-8")
             return True
         except Exception:
             return False
@@ -150,11 +378,8 @@ hl.config({{
         Cambiándolo a compose:ralt (Alt Gr), Bloq Mayús recupera su uso normal.
         """
         compose_opt = "compose:ralt" if use_ralt else "compose:caps"
-        
-        # 1. Aplicar en vivo
         HyprIPC.set_keyword("input:kb_options", compose_opt)
 
-        # 2. Persistir en input.lua si existe o crearlo
         if self.input_file.exists():
             content = self.input_file.read_text(encoding="utf-8")
             if "compose:caps" in content or "compose:ralt" in content:
@@ -165,26 +390,29 @@ hl.config({{
         else:
             self.input_file.write_text(
                 f'-- Configuración de entrada gestionada por Meca\nhl.config({{\n  input = {{\n    kb_options = "{compose_opt}",\n  }},\n}})\n',
-                encoding="utf-8"
+                encoding="utf-8",
             )
         return True
 
     def save_monitor_config(self, monitor_name: str, resolution: str, hz: float, scale: float, x: int = 0, y: int = 0) -> bool:
-        """Guarda y aplica la configuración de un monitor en monitors.lua y hyprctl."""
-        line = f"monitor = {monitor_name}, {resolution}@{hz:.2f}, {x}x{y}, {scale}\n"
-        lua_content = f"""-- Generado por Meca HyprConfig
-hl.config({{
-  monitor = {{
-    "{monitor_name}, {resolution}@{hz:.2f}, {x}x{y}, {scale}",
-  }},
-}})
+        """Guarda y aplica la configuración de un monitor en monitors.lua usando la sintaxis nativa de Omarchy."""
+        gdk_scale = 2 if scale >= 1.5 else 1
+        out_name = monitor_name or ""
+        mode_str = f"{resolution}@{hz:.2f}" if resolution else "preferred"
+        lua_content = f"""-- See https://wiki.hypr.land/Configuring/Basics/Monitors/
+-- Gestionado por Meca HyprConfig
+
+local omarchy_gdk_scale = {gdk_scale}
+local omarchy_monitor_scale = {scale}
+
+hl.env("GDK_SCALE", tostring(omarchy_gdk_scale))
+hl.monitor({{ output = "{out_name}", mode = "{mode_str}", position = "{x}x{y}", scale = omarchy_monitor_scale }})
 """
         try:
             with open(self.monitors_file, "w", encoding="utf-8") as f:
                 f.write(lua_content)
-            
-            # Aplicar en vivo
-            HyprIPC.set_keyword("monitor", f"{monitor_name},{resolution}@{hz:.2f},{x}x{y},{scale}")
+
+            HyprIPC.set_keyword("monitor", f"{out_name},{mode_str},{x}x{y},{scale}")
             return True
         except Exception:
             return False

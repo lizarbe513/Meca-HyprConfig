@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
 Ejemplos de uso:
   meca                  Inicia el panel interactivo TUI
   meca --fix-caps       Libera la tecla Bloq Mayús reasignando Compose a Alt Gr
-  meca --apply-lizarbe  Aplica el tema oficial Lizarbe y sus iconos
+  meca --apply-lizarbe  Aplica el tema Lizarbe y sus iconos
   meca --setup          Aplica todas las preparaciones para nuevos usuarios
   meca --status         Muestra el estado actual del entorno y módulos
         """
@@ -33,7 +33,7 @@ Ejemplos de uso:
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--status", action="store_true", help="Muestra el estado de la configuración actual")
     parser.add_argument("--fix-caps", action="store_true", help="Corrige la tecla Bloq Mayús (Caps Lock)")
-    parser.add_argument("--apply-lizarbe", action="store_true", help="Aplica el tema Lizarbe oficial")
+    parser.add_argument("--apply-lizarbe", action="store_true", help="Aplica el tema Lizarbe")
     parser.add_argument("--setup", action="store_true", help="Ejecuta la preparación completa para nuevos usuarios")
     return parser.parse_args()
 
@@ -74,7 +74,7 @@ def main() -> None:
         return
 
     if args.apply_lizarbe:
-        print("Aplicando tema oficial Lizarbe...")
+        print("Aplicando tema Lizarbe...")
         if LizarbeManager.apply_lizarbe_theme("lizarbe"):
             print("\033[32m✓ Tema Lizarbe aplicado correctamente.\033[0m")
         else:
