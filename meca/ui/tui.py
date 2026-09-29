@@ -57,27 +57,27 @@ class MecaTUI:
         ("LOOK & FEEL", "general", "", "General", "Espaciado, bordes y layout"),
         ("LOOK & FEEL", "decoration", "", "Decoration", "Redondeo, opacidad, blur y sombras"),
         ("LOOK & FEEL", "animations", "", "Animations", "Velocidad y estilo de animaciones"),
-        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Tamaño, ocultacion y zoom"),
-        ("INPUT", "keybinds", "", "Keybinds", "Teclado, repeticion y atajos"),
-        ("INPUT", "devices", "󰍽", "Devices", "Raton, touchpad y gestos"),
+        ("LOOK & FEEL", "cursor", "󰍽", "Cursor", "Tema, tamaño, ocultacion y zoom"),
+        ("INPUT", "keybinds", "", "Keybinds", "Atajos de teclado del sistema"),
+        ("INPUT", "devices", "󰍽", "Input", "Teclado, raton y touchpad"),
         ("DISPLAY", "monitors", "󰍹", "Monitors", "Escala, resolucion y rotacion"),
         ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Escritorios y foco"),
         ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Dwindle, Master, Scrolling y grupos"),
         ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Ventanas flotantes y opacidad"),
         ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Inicio automatico de sesion"),
         ("STARTUP & EXTRAS", "bar", "󰍜", "Barra Superior", "Posicion, reloj y widgets"),
-        ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Seleccion y creacion de temas"),
+        ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Seleccion, edicion y creacion"),
         ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondo, barra y luz nocturna"),
     ]
 
-    # Categorías de la ventana dedicada de Creación de Temas Omarchy
+    # Categorías de la ventana dedicada de Creación/Edición de Temas Omarchy
     CREATOR_SECTIONS = [
-        ("CREAR TEMA", "creator_identity", "󰏘", "Identidad", "Nombre, base, modo e iconos"),
-        ("CREAR TEMA", "creator_borders", "", "Bordes y Acento", "Acento y bordes de ventana"),
-        ("CREAR TEMA", "creator_widgets", "󰍜", "Widgets", "Fondo, texto, borde y opacidad"),
-        ("CREAR TEMA", "creator_media", "󰸉", "Fondos y Preview", "Fondos de pantalla y vista previa"),
-        ("CREAR TEMA", "creator_terminal", "", "Terminal", "Fondo, texto y paleta ANSI"),
-        ("CREAR TEMA", "creator_extras", "", "Extras", "Neovim y teclado RGB"),
+        ("ESTUDIO TEMA", "creator_identity", "󰏘", "Identidad", "Nombre, base, modo e iconos"),
+        ("ESTUDIO TEMA", "creator_borders", "", "Bordes y Acento", "Acento y bordes de ventana"),
+        ("ESTUDIO TEMA", "creator_widgets", "󰍜", "Widgets", "Fondo, texto, borde y opacidad"),
+        ("ESTUDIO TEMA", "creator_media", "󰸉", "Fondos y Preview", "Fondos de pantalla y vista previa"),
+        ("ESTUDIO TEMA", "creator_terminal", "", "Terminal", "Fondo, texto y paleta ANSI"),
+        ("ESTUDIO TEMA", "creator_extras", "", "Extras", "Neovim y teclado RGB"),
     ]
 
     # Paleta curada de colores Hex para selección rápida con previsualización
@@ -96,9 +96,11 @@ class MecaTUI:
         self.running = True
         self._frame_count = 0
 
-        # Modo de ventana activa: "main" (panel principal) | "theme_creator" (ventana de creación de temas)
+        # Modo de ventana activa: "main" (panel principal) | "theme_creator" (ventana de creación/edición de temas)
         self.view_mode: str = "main"
         self._prev_main_section_idx: int = 12
+        self.creator_is_editing: bool = False
+        self.creator_editing_slug: str = ""
         self.theme_creator_spec: Dict[str, Any] = self.theme_engine.get_theme_full_spec(self.theme_engine.current_theme)
 
         # Navegación de paneles: "sidebar" (izquierda), "content" (derecha) o "buttons" (barra inferior)
@@ -112,15 +114,18 @@ class MecaTUI:
         self.settings = self.config_sync.load_gui_settings()
         self.monitors = HyprIPC.get_monitors()
         self.available_themes = self.theme_engine.list_available_themes()
+        self.cursor_themes = self.config_sync.list_cursor_themes()
         self.autostart_items = self.config_sync.load_autostart_items()
+        self.keybind_items = self.config_sync.load_keybinds()
         self.installed_apps = self.config_sync.list_installed_applications()
 
         # Aplicar correcciones silenciosas de fondo (hook de actualización y logo fastfetch) sin ensuciar el panel
         self._ensure_background_fixes()
 
-        # Sincronizar propiedades del tema Omarchy activo dentro de settings
+        # Sincronizar propiedades del tema Omarchy, autostart y keybinds dentro de settings
         self._sync_theme_into_settings()
         self._sync_autostart_into_settings()
+        self._sync_keybinds_into_settings()
 
         # Escalas soportadas para monitores
         self.scales = ["1x", "1.25x", "1.5x", "1.75x", "2x"]
@@ -129,6 +134,7 @@ class MecaTUI:
         # Copia de seguridad del estado guardado para detectar cambios pendientes al cambiar de sección
         self.saved_settings = dict(self.settings)
         self.saved_autostart = [dict(x) for x in self.autostart_items]
+        self.saved_keybinds = [dict(x) for x in self.keybind_items]
         self._was_tiled = False
 
         # Estado del menú desplegable (dropdown) para controles de tipo "select"
@@ -143,10 +149,23 @@ class MecaTUI:
         self._dropdown_row_map: Dict[int, int] = {}
         self._dropdown_box_bounds: Tuple[int, int, int, int] = (0, 0, 0, 0)  # (y1, y2, x1, x2)
 
+        # Estado del menú contextual de clic secundario (clic derecho / tecla m)
+        self.context_menu_open: bool = False
+        self.context_menu_x: int = 24
+        self.context_menu_y: int = 10
+        self.context_menu_title: str = ""
+        self.context_menu_items: List[Tuple[str, str]] = []  # [(etiqueta, accion_id), ...]
+        self.context_menu_idx: int = 0
+        self.hover_context_idx: Optional[int] = None
+        self._context_row_map: Dict[int, int] = {}
+        self._context_box_bounds: Tuple[int, int, int, int] = (0, 0, 0, 0)  # (y1, y2, x1, x2)
+
         # Estado de ventana modal:
-        # None | "confirm_section_change" | "confirm_reset" | "input_autostart" | "input_theme_hex" | "input_creator_text"
+        # None | "confirm_section_change" | "confirm_reset" | "confirm_delete_theme" |
+        # "input_autostart" | "input_theme_hex" | "input_creator_text" | "edit_keybind" | "add_keybind"
         self.modal_state: Optional[str] = None
         self.modal_selected_idx: int = 0
+        self.modal_target_theme: str = ""
         self.pending_section_idx: Optional[int] = None
         self.pending_focus_content: bool = False
         self._modal_button_click_map: Dict[int, Tuple[int, int]] = {}
@@ -154,6 +173,16 @@ class MecaTUI:
 
         # Estado de entrada de texto y selectores para modales interactivos
         self.modal_input_text: str = ""
+        self.modal_input_secondary: str = ""
+        self.modal_input_tertiary: str = ""
+        self.modal_active_field: int = 0  # 0: campo 1, 1: campo 2, 2: campo 3
+        self.modal_keybind_idx: int = 0
+        self.modal_kb_idx: int = 0
+        self.modal_kb_field: int = 0
+        self.modal_kb_keys: str = ""
+        self.modal_kb_action: str = ""
+        self.modal_kb_desc: str = ""
+        self.context_menu_target_key: str = ""
         self.modal_input_kind: str = "launch"  # "launch" (App/Servicio) | "exec" (Comando)
         self.modal_hex_target: str = "creator:accent"
         self.modal_text_target: str = "creator:name"
@@ -161,6 +190,8 @@ class MecaTUI:
         self.modal_theme_mode: str = "dark"
         self._modal_kind_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
         self._modal_mode_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
+        self._modal_field_click_map: Dict[int, Tuple[int, int, int, int]] = {}  # field_idx -> (y1, y2, x1, x2)
+        self._kb_field_click_ranges: Dict[int, Tuple[int, int, int, int]] = {}
 
         # Estado del selector desplegable de aplicaciones en Autostart
         self.autostart_dropdown_open: bool = False
@@ -214,6 +245,11 @@ class MecaTUI:
         for idx, entry in enumerate(self.autostart_items):
             self.settings[f"autostart_entry_{idx}"] = bool(entry.get("enabled", False))
 
+    def _sync_keybinds_into_settings(self) -> None:
+        """Sincroniza el resumen de atajos dentro de self.settings para detección de cambios."""
+        for idx, entry in enumerate(self.keybind_items):
+            self.settings[f"kb_entry_{idx}"] = f"{entry.get('keys')}|{entry.get('cmd')}|{entry.get('enabled')}"
+
     def _build_autostart_section_items(self) -> List[SectionItem]:
         """Construye dinámicamente los controles de la sección Autostart."""
         items = [
@@ -234,6 +270,44 @@ class MecaTUI:
                     cmd,
                     f"{kind_lbl} │ Supr: Eliminar",
                     "toggle",
+                )
+            )
+        return items
+
+    def _build_keybinds_section_items(self) -> List[SectionItem]:
+        """Construye la lista completa de atajos de teclado del sistema para visualizar y editar."""
+        items = [
+            SectionItem(
+                "action:add_keybind",
+                "Nuevo atajo",
+                "Agregar atajo personalizado",
+                "action",
+            ),
+            SectionItem("binds:hide_special", "Ocultar scratchpad", "Al cambiar de escritorio", "toggle"),
+            SectionItem("binds:workspace_back_forth", "Ida y vuelta", "Volver al escritorio previo", "toggle"),
+            SectionItem("binds:allow_cycles", "Ciclos de escritorio", "Navegar historial", "toggle"),
+        ]
+        current_cat = None
+        for idx, entry in enumerate(self.keybind_items):
+            cat = str(entry.get("category", "SISTEMA"))
+            if cat != current_cat:
+                current_cat = cat
+                items.append(
+                    SectionItem(
+                        f"header:kb_{cat}",
+                        cat,
+                        "Clic: Editar │ Clic der: Menu",
+                        "header",
+                    )
+                )
+            title = str(entry.get("title", ""))
+            cmd_desc = str(entry.get("cmd", ""))
+            items.append(
+                SectionItem(
+                    f"keybind:item:{idx}",
+                    title,
+                    cmd_desc,
+                    "action",
                 )
             )
         return items
@@ -291,7 +365,7 @@ class MecaTUI:
         return base
 
     def _build_creator_section_items(self, sec_id: str) -> List[SectionItem]:
-        """Construye los controles de cada categoría en la ventana dedicada de Creación de Temas Omarchy."""
+        """Construye los controles de cada categoría en la ventana dedicada de Creación/Edición de Temas Omarchy."""
         spec = self.theme_creator_spec
         themes = self.available_themes if self.available_themes else ["tokyo-night", "lizarbe", "catppuccin", "rose-pine"]
 
@@ -386,6 +460,7 @@ class MecaTUI:
         """Construye dinámicamente los controles de la sección Temas Omarchy y las tarjetas de temas guardados."""
         self.available_themes = self.theme_engine.list_available_themes()
         themes = self.available_themes if self.available_themes else ["tokyo-night", "lizarbe", "catppuccin", "rose-pine"]
+        sel_theme = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
 
         items = [
             SectionItem(
@@ -395,16 +470,28 @@ class MecaTUI:
                 "action",
             ),
             SectionItem(
+                "action:edit_theme",
+                "Editar tema",
+                f"Modificar '{sel_theme}'",
+                "action",
+            ),
+            SectionItem(
                 "action:clone_theme",
                 "Duplicar tema",
-                f"Basado en '{self.theme_engine.current_theme}'",
+                f"Copia de '{sel_theme}'",
+                "action",
+            ),
+            SectionItem(
+                "action:delete_theme",
+                "Borrar tema",
+                f"Eliminar '{sel_theme}'",
                 "action",
             ),
             SectionItem("omarchy:theme", "Tema", "Tema del sistema", "select", options=themes),
             SectionItem(
                 "header:saved_themes",
                 "TEMAS GUARDADOS",
-                "Supr: Eliminar",
+                "Clic der: Editar o borrar │ Supr: Borrar",
                 "header",
             ),
         ]
@@ -442,6 +529,16 @@ class MecaTUI:
     def _init_section_items(self) -> Dict[str, List[SectionItem]]:
         themes = self.available_themes if self.available_themes else ["tokyo-night", "rose-pine", "lizarbe", "white", "catppuccin"]
         mon_modes = self._get_monitor_mode_options()
+        self.cursor_themes = self.config_sync.list_cursor_themes()
+        cur_ct = str(self.settings.get("cursor_theme", "default"))
+        if cur_ct and cur_ct not in self.cursor_themes:
+            self.cursor_themes.insert(0, cur_ct)
+
+        kb_layouts = ["es", "latam", "us", "us,es", "us,latam", "es,us", "latam,us", "br", "fr", "de", "it", "pt", "gb"]
+        cur_kbl = str(self.settings.get("kb_layout", "es"))
+        if cur_kbl and cur_kbl not in kb_layouts:
+            kb_layouts.insert(0, cur_kbl)
+        kb_layouts.append("Escribir distribucion...")
 
         return {
             "general": [
@@ -493,6 +590,7 @@ class MecaTUI:
                 SectionItem("animations:special", "Escritorio especial", "Transicion de scratchpad", "select", options=["slidevert", "slide", "fade"]),
             ],
             "cursor": [
+                SectionItem("cursor:theme", "Tema del cursor", "Estilo del puntero", "select", options=self.cursor_themes),
                 SectionItem("cursor:size", "Tamaño", "Puntero en pixeles", "select", options=["16", "20", "24", "28", "32", "48"]),
                 SectionItem("cursor:no_hardware_cursors", "Cursor por software", "Evitar parpadeos", "toggle"),
                 SectionItem("cursor:inactive_timeout", "Ocultar inactivo (s)", "0 = nunca", "stepper", 0, 30, 1),
@@ -502,21 +600,19 @@ class MecaTUI:
                 SectionItem("cursor:zoom_factor", "Zoom", "Lupa del puntero", "slider", 1.0, 3.0, 0.25),
                 SectionItem("cursor:zoom_rigid", "Zoom rigido", "Seguir el puntero", "toggle"),
             ],
-            "keybinds": [
-                SectionItem("input:kb_layout", "Distribucion", "Idioma del teclado", "select", options=["us", "latam", "es", "us,latam", "us,es", "br", "fr", "de"]),
-                SectionItem("input:kb_variant", "Variante", "Disposicion de teclas", "select", options=["none", "intl", "deadtilde", "nodeadkeys", "dvorak", "colemak"]),
+            "keybinds": self._build_keybinds_section_items(),
+            "devices": [
+                SectionItem("header:input_kb", "TECLADO", "Distribucion y repeticion", "header"),
+                SectionItem("input:kb_layout", "Distribucion", "Idioma del teclado", "select", options=kb_layouts),
+                SectionItem("input:kb_variant", "Variante", "Disposicion de teclas", "select", options=["none", "intl", "deadtilde", "nodeadkeys", "winkeys", "dvorak", "colemak"]),
+                SectionItem("input:kb_model", "Modelo", "Tipo de teclado", "select", options=["pc105", "pc104", "pc101", "apple", "chromebook", "thinkpad"]),
+                SectionItem("input:kb_grp_toggle", "Cambiar idioma", "Atajo entre distribuciones", "select", options=["Alt Izq + Alt Der", "Alt + Shift", "Super + Espacio", "Ctrl + Shift", "Ninguno"]),
                 SectionItem("input:compose_key", "Tecla Compose", "Alt Gr o Bloq Mayus", "select", options=["Alt Gr (Compose)", "Bloq Mayús (Compose)"]),
                 SectionItem("action:fix_caps", "Corregir Bloq Mayus", "Guardar en input.lua", "action"),
                 SectionItem("input:repeat_rate", "Velocidad de repeticion", "Pulsaciones por segundo", "stepper", 10, 100, 5),
                 SectionItem("input:repeat_delay", "Retardo de repeticion", "Espera inicial (ms)", "stepper", 150, 600, 25),
                 SectionItem("input:numlock_by_default", "Bloq Num al iniciar", "Activar teclado numerico", "toggle"),
-                SectionItem("binds:omarchy_default_bindings", "Atajos de Omarchy", "Atajos base del sistema", "toggle"),
-                SectionItem("binds:omarchy_preinstalled_bindings", "Atajos de apps", "Apps preinstaladas", "toggle"),
-                SectionItem("binds:hide_special", "Ocultar scratchpad", "Al cambiar de escritorio", "toggle"),
-                SectionItem("binds:workspace_back_forth", "Ida y vuelta", "Volver al escritorio previo", "toggle"),
-                SectionItem("binds:allow_cycles", "Ciclos de escritorio", "Navegar historial", "toggle"),
-            ],
-            "devices": [
+                SectionItem("header:input_mouse", "RATON Y TOUCHPAD", "Puntero, scroll y gestos", "header"),
                 SectionItem("input:follow_mouse", "Seguir al raton", "Enfocar al mover (0-3)", "stepper", 0, 3, 1),
                 SectionItem("input:mouse_refocus", "Reenfocar con raton", "Al cruzar bordes", "toggle"),
                 SectionItem("input:sensitivity", "Sensibilidad", "Velocidad del puntero", "slider", -1.0, 1.0, 0.05),
@@ -650,7 +746,8 @@ class MecaTUI:
         if self.view_mode == "theme_creator":
             t_name = self.theme_creator_spec.get("name", "nuevo-tema")
             t_base = self.theme_creator_spec.get("base_theme", self.theme_engine.current_theme)
-            title_left = f" NUEVO TEMA: {t_name} "
+            mode_lbl = "EDITAR TEMA" if self.creator_is_editing else "NUEVO TEMA"
+            title_left = f" {mode_lbl}: {t_name} "
             title_right = f"Base: {t_base} │ Esc: Cancelar "
         else:
             ver = HyprIPC.get_version_info()
@@ -695,7 +792,11 @@ class MecaTUI:
         if self.dropdown_open and not self.modal_state:
             buf.extend(self._render_dropdown_overlay(cols, rows, sidebar_w))
 
-        # 5. Ventana Modal (si está activa)
+        # 5. Menú contextual de clic secundario (Right-Click Context Menu)
+        if self.context_menu_open and not self.modal_state:
+            buf.extend(self._render_context_menu_overlay(cols, rows))
+
+        # 6. Ventana Modal (si está activa)
         if self.modal_state:
             buf.extend(self._render_modal_overlay(cols, rows))
 
@@ -725,8 +826,8 @@ class MecaTUI:
                 break
 
             is_sel = (idx == self.current_section_idx)
-            is_hover = (idx == self.hover_sidebar_idx and not self.modal_state and not self.dropdown_open)
-            is_active_pane = (self.active_pane == "sidebar" and not self.modal_state and not self.dropdown_open)
+            is_hover = (idx == self.hover_sidebar_idx and not self.modal_state and not self.dropdown_open and not self.context_menu_open)
+            is_active_pane = (self.active_pane == "sidebar" and not self.modal_state and not self.dropdown_open and not self.context_menu_open)
 
             screen_row = 2 + len(lines)
             self._sidebar_click_map[screen_row] = idx
@@ -841,9 +942,11 @@ class MecaTUI:
                 self.section_items["bar"] = self._build_bar_section_items()
             elif sec_id == "themes":
                 self.section_items["themes"] = self._build_themes_section_items()
+            elif sec_id == "keybinds":
+                self.section_items["keybinds"] = self._build_keybinds_section_items()
             items = self.section_items.get(sec_id, [])
 
-        is_active_pane = (self.active_pane == "content" and not self.modal_state)
+        is_active_pane = (self.active_pane == "content" and not self.modal_state and not self.context_menu_open)
         content_start_x = sidebar_w + 2
 
         # Asegurar que selected_item_idx no apunte a un separador "header"
@@ -885,7 +988,7 @@ class MecaTUI:
                 lines.append(l3)
                 continue
 
-            is_hover_row = (i == self.hover_item_idx and not self.modal_state and not self.dropdown_open)
+            is_hover_row = (i == self.hover_item_idx and not self.modal_state and not self.dropdown_open and not self.context_menu_open)
             is_sel = (i == self.selected_item_idx and is_active_pane) or is_hover_row
 
             # 2. Contenedor con borde cuadrado / tarjeta para temas guardados ("theme_card")
@@ -933,15 +1036,31 @@ class MecaTUI:
             self._content_click_map[item_screen_row + 1] = click_info
             self._content_click_map[item_screen_row + 2] = click_info
 
+            is_dimmed_kb = False
+            if item.key.startswith("keybind:item:"):
+                kb_idx = int(item.key.split(":")[-1])
+                if 0 <= kb_idx < len(self.keybind_items):
+                    is_dimmed_kb = not bool(self.keybind_items[kb_idx].get("enabled", True))
+
             if is_sel:
                 l1_raw = f" ▌ {item.name}"[:left_max_w].ljust(left_max_w)
                 l2_raw = f" ▌ └─ {item.desc}"[:left_max_w].ljust(left_max_w)
-                l1_styled = self.theme_engine.style("bright_foreground", "soft_selection", l1_raw, bold=True)
-                l2_styled = self.theme_engine.fg("foreground", l2_raw)
+                l1_styled = self.theme_engine.style(
+                    "muted" if is_dimmed_kb else "bright_foreground",
+                    "soft_selection",
+                    l1_raw,
+                    bold=not is_dimmed_kb,
+                )
+                l2_styled = self.theme_engine.fg("muted" if is_dimmed_kb else "foreground", l2_raw)
             else:
                 l1_raw = f"   {item.name}"[:left_max_w].ljust(left_max_w)
                 l2_raw = f"   {item.desc}"[:left_max_w].ljust(left_max_w)
-                l1_styled = self.theme_engine.style("bright_foreground", None, l1_raw, bold=True)
+                l1_styled = self.theme_engine.style(
+                    "muted" if is_dimmed_kb else "bright_foreground",
+                    None,
+                    l1_raw,
+                    bold=not is_dimmed_kb,
+                )
                 l2_styled = self.theme_engine.fg("muted", l2_raw)
 
             l3_styled = " " * left_max_w
@@ -1092,12 +1211,12 @@ class MecaTUI:
         row2_parts = [" " * left_pad]
 
         cur_rel_x = left_pad
-        is_btn_pane = (self.active_pane == "buttons" and not self.modal_state and not self.dropdown_open)
+        is_btn_pane = (self.active_pane == "buttons" and not self.modal_state and not self.dropdown_open and not self.context_menu_open)
 
         for btn_key, btn_idx, label in buttons_spec:
             inner_w = len(label)
             btn_w = inner_w + 2
-            is_hover_btn = (self.hover_button_key == btn_key and not self.modal_state and not self.dropdown_open)
+            is_hover_btn = (self.hover_button_key == btn_key and not self.modal_state and not self.dropdown_open and not self.context_menu_open)
             is_sel = (is_btn_pane and self.selected_button_idx == btn_idx) or is_hover_btn
             is_primary = (btn_key == "save")
 
@@ -1233,18 +1352,40 @@ class MecaTUI:
             return c_top, c_mid, c_bot, inner_w + 2
 
         elif item.item_type == "action":
+            is_enabled_kb = True
             if item.key == "action:create_theme":
                 raw_lbl = " Nuevo "
+            elif item.key == "action:edit_theme":
+                raw_lbl = " Editar "
             elif item.key == "action:clone_theme":
                 raw_lbl = " Duplicar "
+            elif item.key == "action:delete_theme":
+                raw_lbl = " Borrar "
+            elif item.key in ("action:add_keybind", "action:add_autostart"):
+                raw_lbl = " + Agregar "
             elif item.key == "creator:name":
                 raw_lbl = f" {self.theme_creator_spec.get('name', 'nuevo-tema')} "
+            elif item.key.startswith("keybind:item:"):
+                kb_idx = int(item.key.split(":")[-1])
+                if 0 <= kb_idx < len(self.keybind_items):
+                    entry = self.keybind_items[kb_idx]
+                    raw_lbl = f" {entry.get('keys', '')} "
+                    is_enabled_kb = bool(entry.get("enabled", True))
+                else:
+                    raw_lbl = " - "
             elif item.key.startswith("user_theme:item:"):
                 raw_lbl = " Seleccionar "
             else:
                 raw_lbl = " Ejecutar "
             inner_w = len(raw_lbl)
             c_hov = (hover_sub == "control")
+            if not is_enabled_kb:
+                c_top = self.theme_engine.style("muted", None, "┌" + ("─" * inner_w) + "┐")
+                inner_s = self.theme_engine.style("muted", None, raw_lbl)
+                c_mid = self.theme_engine.fg("muted", "│") + inner_s + self.theme_engine.fg("muted", "│")
+                c_bot = self.theme_engine.fg("muted", "└" + ("─" * inner_w) + "┘")
+                return c_top, c_mid, c_bot, inner_w + 2
+
             c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
             inner_bg = "soft_hover" if c_hov else ("soft_selection" if is_sel else None)
             inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=True)
@@ -1268,6 +1409,266 @@ class MecaTUI:
         raw = str(val)
         return " " * len(raw), raw, " " * len(raw), len(raw)
 
+    def _open_context_menu(self, x: int, y: int, sidebar_w: int) -> None:
+        """Abre el menú contextual de clic secundario según el elemento bajo el cursor."""
+        self.dropdown_open = False
+        self.context_menu_x = x
+        self.context_menu_y = y
+        self.context_menu_idx = 0
+        self.hover_context_idx = None
+        self.context_menu_target_key = ""
+
+        active_sections = self._get_active_sections()
+        sec_id = active_sections[self.current_section_idx][1]
+
+        if x > sidebar_w + 1 and y in self._content_click_map:
+            info = self._content_click_map[y]
+            self.active_pane = "content"
+            self.selected_item_idx = info["item_idx"]
+            item: SectionItem = info["item"]
+            self.context_menu_target_key = item.key
+
+            if item.item_type == "theme_card" or item.key.startswith("user_theme:item:"):
+                t_name = item.name if item.item_type == "theme_card" else item.key.split(":", 2)[-1]
+                u_slugs = {self.theme_engine.normalize_theme_slug(u) for u in self.theme_engine.list_user_themes()}
+                is_user = self.theme_engine.normalize_theme_slug(t_name) in u_slugs
+                menu_items = [
+                    (f"theme:select:{t_name}", f"󰸌  Seleccionar '{t_name}'"),
+                    (f"theme:edit:{t_name}", f"󰏫  Editar '{t_name}'"),
+                    (f"theme:clone:{t_name}", f"󰆏  Duplicar '{t_name}'"),
+                    ("theme:new", "󰐕  Nuevo tema"),
+                ]
+                if is_user:
+                    menu_items.append((f"theme:delete:{t_name}", f"󰆴  Borrar '{t_name}'"))
+                self.context_menu_items = menu_items
+                self.context_menu_open = True
+                return
+
+            if item.key.startswith("keybind:item:"):
+                kb_idx = int(item.key.split(":")[-1])
+                if 0 <= kb_idx < len(self.keybind_items):
+                    entry = self.keybind_items[kb_idx]
+                    is_en = bool(entry.get("enabled", True))
+                    menu_items = [
+                        (f"kb:edit_keys:{kb_idx}", "󰌌  Cambiar teclas"),
+                        (f"kb:edit_action:{kb_idx}", "󰏫  Editar accion"),
+                        (f"kb:toggle:{kb_idx}", "󰔡  Desactivar atajo" if is_en else "󰔡  Activar atajo"),
+                    ]
+                    if entry.get("is_custom"):
+                        menu_items.append((f"kb:delete:{kb_idx}", "󰆴  Eliminar atajo"))
+                    else:
+                        menu_items.append((f"kb:reset:{kb_idx}", "󰑐  Restaurar original"))
+                    menu_items.append(("kb:new", "󰐕  Nuevo atajo"))
+                    self.context_menu_items = menu_items
+                    self.context_menu_open = True
+                    return
+
+            if item.key.startswith("autostart:item:"):
+                as_idx = int(item.key.split(":")[-1])
+                if 0 <= as_idx < len(self.autostart_items):
+                    is_en = bool(self.autostart_items[as_idx].get("enabled", True))
+                    self.context_menu_items = [
+                        (f"as:toggle:{as_idx}", "󰔡  Desactivar" if is_en else "󰔡  Activar"),
+                        (f"as:delete:{as_idx}", "󰆴  Eliminar"),
+                        ("as:add", "󰐕  Agregar a Autostart"),
+                    ]
+                    self.context_menu_open = True
+                    return
+
+            if sec_id == "themes":
+                cur_t = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
+                u_slugs = {self.theme_engine.normalize_theme_slug(u) for u in self.theme_engine.list_user_themes()}
+                is_user = self.theme_engine.normalize_theme_slug(cur_t) in u_slugs
+                menu_items = [
+                    ("theme:new", "󰐕  Nuevo tema"),
+                    (f"theme:edit:{cur_t}", f"󰏫  Editar '{cur_t}'"),
+                    (f"theme:clone:{cur_t}", f"󰆏  Duplicar '{cur_t}'"),
+                ]
+                if is_user:
+                    menu_items.append((f"theme:delete:{cur_t}", f"󰆴  Borrar '{cur_t}'"))
+                self.context_menu_items = menu_items
+                self.context_menu_open = True
+                return
+
+            self.context_menu_items = [
+                ("item:activate", f"󰏫  Modificar '{item.name[:20]}'"),
+                ("item:reset_one", "󰑐  Restablecer opcion"),
+                ("app:save", "󰄬  Aplicar cambios"),
+                ("app:reset_all", "󰑐  Restablecer todo"),
+            ]
+            self.context_menu_open = True
+            return
+
+        if x <= sidebar_w and y in self._sidebar_click_map:
+            s_idx = self._sidebar_click_map[y]
+            s_title = active_sections[s_idx][3]
+            self.context_menu_items = [
+                (f"sec:goto:{s_idx}", f"󰁔  Ir a {s_title}"),
+                ("app:save", "󰄬  Aplicar cambios"),
+                ("app:reset_all", "󰑐  Restablecer valores"),
+                ("app:cancel", "󰅖  Cancelar y salir"),
+            ]
+            self.context_menu_open = True
+            return
+
+        self.context_menu_items = [
+            ("app:save", "󰄬  Aplicar cambios"),
+            ("app:reset_all", "󰑐  Restablecer valores"),
+            ("app:cancel", "󰅖  Cancelar y salir"),
+        ]
+        self.context_menu_open = True
+
+    def _render_context_menu_overlay(self, cols: int, rows: int) -> List[str]:
+        """Renderiza el menú contextual flotante de clic secundario."""
+        self._context_row_map.clear()
+        if not self.context_menu_items:
+            return []
+
+        max_lbl = max(len(lbl) for _, lbl in self.context_menu_items)
+        inner_w = max(24, min(42, max_lbl + 4))
+        box_w = inner_w + 2
+        box_h = len(self.context_menu_items) + 2
+
+        start_x = min(max(2, self.context_menu_x), max(2, cols - box_w - 1))
+        start_y = min(max(2, self.context_menu_y), max(2, rows - box_h - 1))
+        self._context_box_bounds = (start_y, start_y + box_h - 1, start_x, start_x + box_w - 1)
+
+        overlay: List[str] = []
+        top_line = "┌" + ("─" * inner_w) + "┐"
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("accent", "background", top_line, bold=True))
+
+        for idx, (_, label) in enumerate(self.context_menu_items):
+            scr_y = start_y + 1 + idx
+            self._context_row_map[scr_y] = idx
+            is_sel = (idx == self.context_menu_idx)
+            is_hov = (idx == self.hover_context_idx)
+            is_hi = (is_sel or is_hov)
+
+            prefix = " ▸ " if is_hi else "   "
+            row_txt = f"{prefix}{label}"[:inner_w].ljust(inner_w)
+            row_bg = "soft_hover" if is_hov else ("soft_selection" if is_sel else "background")
+            row_fg = "bright_foreground" if is_hi else "foreground"
+
+            overlay.append(
+                f"\033[{scr_y};{start_x}H"
+                + self.theme_engine.style("accent", "background", "┃", bold=True)
+                + self.theme_engine.style(row_fg, row_bg, row_txt, bold=is_hi)
+                + self.theme_engine.style("accent", "background", "│", bold=True)
+            )
+
+        bot_line = "┗" + ("━" * inner_w) + "┙"
+        overlay.append(f"\033[{start_y + box_h - 1};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
+        return overlay
+
+    def _execute_context_action(self, act_id: str) -> None:
+        """Ejecuta una opción seleccionada en el menú contextual de clic secundario."""
+        self.context_menu_open = False
+        self.hover_context_idx = None
+
+        if act_id.startswith("sec:goto:"):
+            s_idx = int(act_id.split(":")[-1])
+            self._request_section_change(s_idx, focus_content=True)
+            return
+
+        if act_id == "app:save":
+            self.save_all()
+            return
+        if act_id == "app:reset_all":
+            self.reset_to_defaults()
+            return
+        if act_id == "app:cancel":
+            self.cancel_changes()
+            return
+
+        if act_id == "item:activate":
+            self._activate_current_item()
+            return
+        if act_id == "item:reset_one":
+            key = self.context_menu_target_key
+            if key in self.KEY_TO_SETTING:
+                s_key, _, def_val = self.KEY_TO_SETTING[key]
+                self.settings[s_key] = def_val
+                self.status_message = f"Restablecido: {s_key} = {def_val}"
+            return
+
+        if act_id == "theme:new":
+            self._execute_action("action:create_theme")
+            return
+        if act_id.startswith("theme:select:"):
+            t_name = act_id.split(":", 2)[-1]
+            self._set_item_value("omarchy:theme", t_name)
+            return
+        if act_id.startswith("theme:edit:"):
+            t_name = act_id.split(":", 2)[-1]
+            self._open_theme_editor(t_name)
+            return
+        if act_id.startswith("theme:clone:"):
+            t_name = act_id.split(":", 2)[-1]
+            self.settings["omarchy_theme_name"] = t_name
+            self._execute_action("action:clone_theme")
+            return
+        if act_id.startswith("theme:delete:"):
+            t_name = act_id.split(":", 2)[-1]
+            self._prompt_delete_theme(t_name)
+            return
+
+        if act_id == "kb:new":
+            self._execute_action("action:add_keybind")
+            return
+        if act_id.startswith("kb:edit_keys:"):
+            kb_idx = int(act_id.split(":")[-1])
+            self._open_keybind_modal(kb_idx, initial_field=0)
+            return
+        if act_id.startswith("kb:edit_action:"):
+            kb_idx = int(act_id.split(":")[-1])
+            self._open_keybind_modal(kb_idx, initial_field=1)
+            return
+        if act_id.startswith("kb:toggle:"):
+            kb_idx = int(act_id.split(":")[-1])
+            if 0 <= kb_idx < len(self.keybind_items):
+                cur_en = bool(self.keybind_items[kb_idx].get("enabled", True))
+                self.keybind_items[kb_idx]["enabled"] = not cur_en
+                self.section_items["keybinds"] = self._build_keybinds_section_items()
+                state_str = "activado" if not cur_en else "desactivado"
+                self.status_message = f"Atajo '{self.keybind_items[kb_idx].get('desc')}' {state_str}."
+            return
+        if act_id.startswith("kb:reset:"):
+            kb_idx = int(act_id.split(":")[-1])
+            if 0 <= kb_idx < len(self.keybind_items):
+                entry = self.keybind_items[kb_idx]
+                entry["keys"] = entry.get("orig_keys", entry.get("keys", ""))
+                entry["action"] = entry.get("orig_action", entry.get("action", ""))
+                entry["enabled"] = True
+                self.section_items["keybinds"] = self._build_keybinds_section_items()
+                self.status_message = f"Atajo '{entry.get('desc')}' restaurado."
+            return
+        if act_id.startswith("kb:delete:"):
+            kb_idx = int(act_id.split(":")[-1])
+            if 0 <= kb_idx < len(self.keybind_items):
+                removed = self.keybind_items.pop(kb_idx)
+                self.section_items["keybinds"] = self._build_keybinds_section_items()
+                self.status_message = f"Atajo '{removed.get('desc')}' eliminado."
+            return
+
+        if act_id == "as:add":
+            self._execute_action("action:add_autostart")
+            return
+        if act_id.startswith("as:toggle:"):
+            as_idx = int(act_id.split(":")[-1])
+            if 0 <= as_idx < len(self.autostart_items):
+                self.autostart_items[as_idx]["enabled"] = not bool(self.autostart_items[as_idx].get("enabled", True))
+                self._sync_autostart_into_settings()
+                self.section_items["autostart"] = self._build_autostart_section_items()
+            return
+        if act_id.startswith("as:delete:"):
+            as_idx = int(act_id.split(":")[-1])
+            if 0 <= as_idx < len(self.autostart_items):
+                removed = self.autostart_items.pop(as_idx)
+                self._sync_autostart_into_settings()
+                self.section_items["autostart"] = self._build_autostart_section_items()
+                self.status_message = f"Eliminado de Autostart: {removed.get('cmd')}"
+            return
+
     def _get_filtered_autostart_apps(self) -> List[Dict[str, str]]:
         """Filtra la lista de aplicaciones instaladas según el texto buscado en el modal de Autostart."""
         q = self.modal_input_text.strip().lower()
@@ -1285,11 +1686,14 @@ class MecaTUI:
         self._modal_mode_click_range = (0, 0, 0)
         self._autostart_dropdown_btn_range = (0, 0, 0, 0)
         self._autostart_list_click_map.clear()
+        self._kb_field_click_ranges.clear()
 
         if self.modal_state == "input_autostart":
             return self._render_autostart_modal(cols, rows)
         if self.modal_state in ("input_theme_hex", "input_creator_text"):
             return self._render_input_modal(cols, rows)
+        if self.modal_state in ("edit_keybind", "add_keybind"):
+            return self._render_keybind_modal(cols, rows)
 
         if self.modal_state == "confirm_section_change":
             title = " CAMBIOS SIN APLICAR "
@@ -1299,6 +1703,15 @@ class MecaTUI:
                 (0, " Descartar "),
                 (1, " Cancelar "),
                 (2, " Aplicar "),
+            ]
+        elif self.modal_state == "confirm_delete_theme":
+            t_slug = getattr(self, "_pending_delete_theme_slug", "")
+            title = " BORRAR TEMA DE USUARIO "
+            msg_1 = f"Se eliminara '{t_slug}' de tus temas."
+            msg_2 = "¿Confirmar borrado?"
+            modal_btns = [
+                (0, " Cancelar "),
+                (1, " Borrar "),
             ]
         else:
             title = " RESTABLECER "
@@ -1378,6 +1791,110 @@ class MecaTUI:
         overlay.append(f"\033[{btn_y_top + 2};{start_x}H" + "".join(b_r2))
         overlay.append(f"\033[{start_y + 9};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
 
+        return overlay
+
+    def _render_keybind_modal(self, cols: int, rows: int) -> List[str]:
+        """Renderiza el modal para editar o crear un atajo de teclado del sistema."""
+        is_add = (self.modal_state == "add_keybind")
+        title = " NUEVO ATAJO " if is_add else f" EDITAR ATAJO: {self.modal_kb_desc[:28]} "
+
+        mw = min(64, cols - 4)
+        inner_mw = mw - 2
+        box_w = inner_mw - 6
+        fields_spec = [
+            (0, "Combinacion de teclas (ej. SUPER + RETURN):", self.modal_kb_keys),
+            (1, "Comando o accion:", self.modal_kb_action),
+        ]
+        if is_add:
+            fields_spec.append((2, "Nombre del atajo:", self.modal_kb_desc))
+
+        mh = 8 + len(fields_spec) * 4
+        start_x = max(2, (cols - mw) // 2)
+        start_y = max(2, (rows - mh) // 2)
+
+        overlay: List[str] = []
+        top_line = "┌" + ("─" * inner_mw) + "┐"
+        title_centered = title[:inner_mw].center(inner_mw)
+        sep_line = "├" + ("─" * inner_mw) + "┤"
+        bot_line = "┗" + ("━" * inner_mw) + "┙"
+
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+
+        cur_y = start_y + 3
+        for f_idx, f_lbl, f_val in fields_spec:
+            is_f_active = (self.modal_kb_field == f_idx)
+            shown_txt = ((f_val + "█") if is_f_active else f_val)[-box_w:].ljust(box_w)
+            f_col = "accent" if is_f_active else "muted"
+            f_txt_col = "bright_foreground" if is_f_active else "foreground"
+            f_bg = "soft_selection" if is_f_active else "background"
+
+            input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+            input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
+            input_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+
+            self._kb_field_click_ranges[f_idx] = (cur_y + 1, cur_y + 3, start_x + 2, start_x + inner_mw - 2)
+
+            overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃  " + f_lbl.ljust(inner_mw - 2)[:inner_mw - 2] + "│"))
+            overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_top + "│"))
+            overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style(f_txt_col, f_bg, "┃" + input_mid + "│", bold=is_f_active))
+            overlay.append(f"\033[{cur_y + 3};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_bot + "│"))
+            cur_y += 4
+
+        modal_btns = [
+            (0, " Cancelar "),
+            (1, " Guardar "),
+        ]
+        if not is_add and 0 <= self.modal_kb_idx < len(self.keybind_items):
+            entry = self.keybind_items[self.modal_kb_idx]
+            is_en = bool(entry.get("enabled", True))
+            modal_btns.append((2, " Desactivar " if is_en else " Activar "))
+
+        gap = 2
+        btns_total_w = sum(len(lbl) + 2 for _, lbl in modal_btns) + gap * (len(modal_btns) - 1)
+        pad_left = max(1, (inner_mw - btns_total_w) // 2)
+        pad_right = max(0, inner_mw - btns_total_w - pad_left)
+
+        btn_y_top = cur_y
+        self._modal_button_row_range = (btn_y_top, btn_y_top + 2)
+
+        b_r0 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+        b_r1 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+        b_r2 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+
+        cur_x = start_x + 1 + pad_left
+        for b_idx, b_lbl in modal_btns:
+            bw = len(b_lbl) + 2
+            is_b_hov = (self.hover_modal_btn_idx == b_idx)
+            is_b_sel = (self.modal_selected_idx == b_idx) or is_b_hov
+            self._modal_button_click_map[b_idx] = (cur_x, cur_x + bw - 1)
+            b_col = "bright_foreground" if is_b_sel else "foreground"
+            sh_col = "accent" if is_b_sel else "muted"
+            btn_bg = "soft_hover" if is_b_hov else ("soft_selection" if is_b_sel else "background")
+
+            r0_s = self.theme_engine.style(b_col, "background", "┌" + ("─" * len(b_lbl)) + "┐", bold=is_b_sel)
+            r1_s = (
+                self.theme_engine.style(sh_col, "background", "┃", bold=True)
+                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", btn_bg, b_lbl, bold=is_b_sel)
+                + self.theme_engine.style(b_col, "background", "│", bold=is_b_sel)
+            )
+            r2_s = self.theme_engine.style(sh_col, "background", "┗" + ("━" * len(b_lbl)) + "┙", bold=True)
+
+            sep_gap = self.theme_engine.style("foreground", "background", " " * gap) if b_idx < len(modal_btns) - 1 else ""
+            b_r0.append(r0_s + sep_gap)
+            b_r1.append(r1_s + sep_gap)
+            b_r2.append(r2_s + sep_gap)
+            cur_x += bw + gap
+
+        b_r0.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+        b_r1.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+        b_r2.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+
+        overlay.append(f"\033[{btn_y_top};{start_x}H" + "".join(b_r0))
+        overlay.append(f"\033[{btn_y_top + 1};{start_x}H" + "".join(b_r1))
+        overlay.append(f"\033[{btn_y_top + 2};{start_x}H" + "".join(b_r2))
+        overlay.append(f"\033[{btn_y_top + 3};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
         return overlay
 
     def _render_autostart_modal(self, cols: int, rows: int) -> List[str]:
@@ -1560,7 +2077,7 @@ class MecaTUI:
             title = " EDITAR VALOR "
             prop_name = self.modal_text_target.replace("creator:", "")
             sub_lbl = f"  {prop_name}"
-            prompt_lbl = "Nombre o ruta:"
+            prompt_lbl = "Valor:"
 
         mw = min(58, cols - 4)
         inner_mw = mw - 2
@@ -1711,6 +2228,7 @@ class MecaTUI:
         "animations:workspaces": ("anim_workspaces", str, "slide"),
         "animations:special": ("anim_special", str, "slidevert"),
         # Cursor
+        "cursor:theme": ("cursor_theme", str, "default"),
         "cursor:size": ("cursor_size", int, 24),
         "cursor:no_hardware_cursors": ("no_hw_cursors", bool, True),
         "cursor:inactive_timeout": ("cursor_timeout", int, 0),
@@ -1721,6 +2239,8 @@ class MecaTUI:
         "cursor:zoom_rigid": ("cursor_zoom_rigid", bool, False),
         # Keybinds & Input
         "input:kb_layout": ("kb_layout", str, "us"),
+        "input:kb_model": ("kb_model", str, "pc105"),
+        "input:kb_grp_toggle": ("kb_grp_toggle", str, "none"),
         "input:repeat_rate": ("repeat_rate", int, 40),
         "input:repeat_delay": ("repeat_delay", int, 250),
         "input:numlock_by_default": ("numlock", bool, True),
@@ -1820,12 +2340,23 @@ class MecaTUI:
         if key == "omarchy:theme":
             return self.settings.get("omarchy_theme_name", self.theme_engine.current_theme)
 
+        if key == "cursor:theme":
+            return str(self.settings.get("cursor_theme", "default") or "default")
+
         if key == "cursor:size":
             return str(self.settings.get("cursor_size", 24))
 
         if key == "input:kb_variant":
             v = str(self.settings.get("kb_variant", "")).strip()
             return v if v else "none"
+
+        if key == "input:kb_model":
+            m = str(self.settings.get("kb_model", "pc105")).strip()
+            return m if m else "pc105"
+
+        if key == "input:kb_grp_toggle":
+            g = str(self.settings.get("kb_grp_toggle", "none")).strip()
+            return g if g else "none"
 
         if key == "input:compose_key":
             return "Alt Gr (Compose)" if self.settings.get("compose_key", "ralt") == "ralt" else "Bloq Mayús (Compose)"
@@ -1857,8 +2388,12 @@ class MecaTUI:
         return self.settings.get(key, "-")
 
     def has_unsaved_changes(self) -> bool:
-        """Indica si el usuario modificó algún ajuste o entrada de autostart respecto al último estado aplicado."""
-        return (self.settings != self.saved_settings) or (self.autostart_items != self.saved_autostart)
+        """Indica si el usuario modificó algún ajuste, autostart o atajo respecto al último estado aplicado."""
+        return (
+            (self.settings != self.saved_settings)
+            or (self.autostart_items != self.saved_autostart)
+            or (self.keybind_items != self.saved_keybinds)
+        )
 
     def _request_section_change(self, target_idx: int, focus_content: bool = False) -> None:
         """
@@ -1867,6 +2402,7 @@ class MecaTUI:
         En la ventana de creación de temas, cambia directamente entre las categorías del estudio.
         """
         self.dropdown_open = False
+        self.context_menu_open = False
         active_sections = self._get_active_sections()
         target_idx = max(0, min(len(active_sections) - 1, target_idx))
         if target_idx == self.current_section_idx:
@@ -1899,6 +2435,49 @@ class MecaTUI:
             self.autostart_dropdown_open = False
             self.modal_selected_idx = 1
 
+    def _open_keybind_modal(self, kb_idx: int, initial_field: int = 0) -> None:
+        """Abre el modal de edición de un atajo de teclado del sistema."""
+        if not (0 <= kb_idx < len(self.keybind_items)):
+            return
+        entry = self.keybind_items[kb_idx]
+        self.modal_state = "edit_keybind"
+        self.modal_kb_idx = kb_idx
+        self.modal_kb_field = initial_field
+        self.modal_kb_keys = str(entry.get("keys", ""))
+        self.modal_kb_action = str(entry.get("action", ""))
+        self.modal_kb_desc = str(entry.get("desc", ""))
+        self.modal_selected_idx = 1
+
+    def _open_theme_editor(self, theme_name: str) -> None:
+        """Abre el Estudio de Temas precargado con el tema indicado para editarlo."""
+        self._prev_main_section_idx = self.current_section_idx
+        slug = self.theme_engine.normalize_theme_slug(theme_name)
+        self.theme_creator_spec = self.theme_engine.get_theme_full_spec(theme_name)
+        self.theme_creator_spec["name"] = slug
+        self.theme_creator_spec["base_theme"] = theme_name
+        self.creator_is_editing = True
+        self.creator_editing_slug = slug
+        for _, c_sec_id, _, _, _ in self.CREATOR_SECTIONS:
+            self.section_items[c_sec_id] = self._build_creator_section_items(c_sec_id)
+        self.view_mode = "theme_creator"
+        self.current_section_idx = 0
+        self.selected_item_idx = 1
+        self.selected_button_idx = 2
+        self.content_scroll_offset = 0
+        self.active_pane = "content"
+        self.status_message = f"Editando tema '{slug}': ajusta valores y pulsa 'Guardar'."
+
+    def _prompt_delete_theme(self, theme_name: str) -> None:
+        """Solicita confirmación para borrar un tema de usuario en ~/.config/omarchy/themes."""
+        slug = self.theme_engine.normalize_theme_slug(theme_name)
+        user_slugs = {self.theme_engine.normalize_theme_slug(u) for u in self.theme_engine.list_user_themes()}
+        if slug not in user_slugs:
+            self.status_message = f"'{theme_name}' es un tema del sistema; solo se borran temas de usuario."
+            return
+        self._pending_delete_theme_slug = slug
+        self.modal_state = "confirm_delete_theme"
+        self.modal_selected_idx = 1
+
     def _execute_modal_choice(self, choice_idx: int) -> None:
         """Ejecuta la acción seleccionada dentro de la ventana modal activa."""
         state = self.modal_state
@@ -1911,6 +2490,7 @@ class MecaTUI:
             if choice_idx == 0:  # Descartar cambios y cambiar de sección
                 self.settings = dict(self.saved_settings)
                 self.autostart_items = [dict(x) for x in self.saved_autostart]
+                self.keybind_items = [dict(x) for x in self.saved_keybinds]
                 self.status_message = "Cambios descartados."
                 if self.pending_section_idx is not None:
                     self.current_section_idx = self.pending_section_idx
@@ -1935,6 +2515,69 @@ class MecaTUI:
                 self.status_message = "Restablecimiento cancelado."
             elif choice_idx == 1:  # Confirmar restablecimiento
                 self._perform_reset_to_defaults()
+
+        elif state == "confirm_delete_theme":
+            t_slug = getattr(self, "_pending_delete_theme_slug", "")
+            if choice_idx == 1 and t_slug:
+                ok, msg = self.theme_engine.delete_user_theme(t_slug)
+                self.available_themes = self.theme_engine.list_available_themes()
+                self._sync_theme_into_settings()
+                self.saved_settings = dict(self.settings)
+                self.section_items = self._init_section_items()
+                self.selected_item_idx = max(0, min(self.selected_item_idx, len(self.section_items["themes"]) - 1))
+                self.status_message = msg
+            else:
+                self.status_message = "Borrado de tema cancelado."
+
+        elif state == "edit_keybind":
+            if 0 <= self.modal_kb_idx < len(self.keybind_items):
+                entry = self.keybind_items[self.modal_kb_idx]
+                if choice_idx == 1:
+                    new_k = self.modal_kb_keys.strip()
+                    new_a = self.modal_kb_action.strip()
+                    if new_k:
+                        entry["keys"] = new_k
+                    if new_a:
+                        entry["action"] = new_a
+                        if new_a.startswith("hl.") or new_a.startswith("o."):
+                            entry["kind"] = "lua"
+                        elif entry.get("kind") == "lua":
+                            entry["kind"] = "cmd"
+                    self.section_items["keybinds"] = self._build_keybinds_section_items()
+                    self.status_message = f"Atajo '{entry.get('desc')}' actualizado (Pulsa 'Aplicar')."
+                elif choice_idx == 2:
+                    cur_en = bool(entry.get("enabled", True))
+                    entry["enabled"] = not cur_en
+                    self.section_items["keybinds"] = self._build_keybinds_section_items()
+                    self.status_message = f"Atajo {'activado' if not cur_en else 'desactivado'} (Pulsa 'Aplicar')."
+                else:
+                    self.status_message = "Edicion de atajo cancelada."
+
+        elif state == "add_keybind":
+            if choice_idx == 1:
+                new_k = self.modal_kb_keys.strip()
+                new_a = self.modal_kb_action.strip()
+                new_d = self.modal_kb_desc.strip() or new_a
+                if new_k and new_a:
+                    kind = "lua" if (new_a.startswith("hl.") or new_a.startswith("o.")) else "cmd"
+                    self.keybind_items.append({
+                        "id": f"custom_{len(self.keybind_items)}",
+                        "cat": "Personalizados",
+                        "desc": new_d,
+                        "keys": new_k,
+                        "orig_keys": new_k,
+                        "action": new_a,
+                        "orig_action": new_a,
+                        "kind": kind,
+                        "enabled": True,
+                        "is_custom": True,
+                    })
+                    self.section_items["keybinds"] = self._build_keybinds_section_items()
+                    self.status_message = f"Atajo '{new_d}' agregado (Pulsa 'Aplicar')."
+                else:
+                    self.status_message = "Atajo incompleto cancelado."
+            else:
+                self.status_message = "Nuevo atajo cancelado."
 
         elif state == "input_autostart":
             if choice_idx == 1:
@@ -1980,9 +2623,13 @@ class MecaTUI:
             if choice_idx == 1:
                 txt_val = self.modal_input_text.strip()
                 if txt_val:
-                    field = self.modal_text_target.replace("creator:", "")
-                    self.theme_creator_spec[field] = txt_val
-                    self.status_message = f"✓ Valor '{field}' establecido en: {txt_val}"
+                    if self.modal_text_target.startswith("creator:"):
+                        field = self.modal_text_target.replace("creator:", "")
+                        self.theme_creator_spec[field] = txt_val
+                        self.status_message = f"✓ Valor '{field}' establecido en: {txt_val}"
+                    else:
+                        self._set_item_value(self.modal_text_target, txt_val)
+                        self.status_message = f"✓ Valor establecido en: {txt_val}"
             self.modal_input_text = ""
 
     # ==========================
@@ -2034,6 +2681,28 @@ class MecaTUI:
         self.hover_button_key = None
         self.hover_autostart_app_idx = None
         self.hover_dropdown_idx = None
+        self.hover_context_idx = None
+
+        # 0. Si el menú contextual de clic secundario está abierto
+        if self.context_menu_open and not self.modal_state:
+            if ch == b"\x1b" and len(ch) == 1:
+                self.context_menu_open = False
+                return
+            if ch == b"\x1b[A":
+                self.context_menu_idx = max(0, self.context_menu_idx - 1)
+                return
+            if ch == b"\x1b[B":
+                self.context_menu_idx = min(len(self.context_menu_items) - 1, self.context_menu_idx + 1)
+                return
+            if ch in (b"\r", b"\n", b" "):
+                if 0 <= self.context_menu_idx < len(self.context_menu_items):
+                    act_id = self.context_menu_items[self.context_menu_idx][0]
+                    self._execute_context_action(act_id)
+                else:
+                    self.context_menu_open = False
+                return
+            self.context_menu_open = False
+            return
 
         # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
         if self.dropdown_open and not self.modal_state:
@@ -2057,7 +2726,7 @@ class MecaTUI:
                         self.modal_input_text = str(self._get_item_value(self.dropdown_item))
                         self.modal_selected_idx = 1
                         return
-                    elif chosen == "Escribir ruta...":
+                    elif chosen in ("Escribir ruta...", "Escribir distribucion..."):
                         self.modal_state = "input_creator_text"
                         self.modal_text_target = target_key
                         self.modal_input_text = str(self._get_item_value(self.dropdown_item))
@@ -2067,6 +2736,50 @@ class MecaTUI:
                         self._set_item_value(target_key, chosen)
                 self.dropdown_open = False
                 return
+            return
+
+        # 1b. Si el modal de edición/creación de atajos está activo
+        if self.modal_state in ("edit_keybind", "add_keybind"):
+            max_field = 2 if self.modal_state == "add_keybind" else 1
+            max_btn = 1 if self.modal_state == "add_keybind" else 2
+            if ch == b"\x1b" and len(ch) == 1:
+                self.modal_state = None
+                return
+            if ch in (b"\t", b"\x1b[B"):
+                self.modal_kb_field = (self.modal_kb_field + 1) % (max_field + 1)
+                return
+            if ch == b"\x1b[A":
+                self.modal_kb_field = (self.modal_kb_field - 1) % (max_field + 1)
+                return
+            if ch in (b"\x1b[D", b"\x1b[Z"):
+                self.modal_selected_idx = max(0, self.modal_selected_idx - 1)
+                return
+            if ch == b"\x1b[C":
+                self.modal_selected_idx = min(max_btn, self.modal_selected_idx + 1)
+                return
+            if ch in (b"\r", b"\n"):
+                self._execute_modal_choice(self.modal_selected_idx)
+                return
+            if ch in (b"\x7f", b"\x08"):
+                if self.modal_kb_field == 0:
+                    self.modal_kb_keys = self.modal_kb_keys[:-1]
+                elif self.modal_kb_field == 1:
+                    self.modal_kb_action = self.modal_kb_action[:-1]
+                else:
+                    self.modal_kb_desc = self.modal_kb_desc[:-1]
+                return
+            try:
+                decoded = ch.decode("utf-8", errors="ignore")
+                for c in decoded:
+                    if c.isprintable() and c not in ("\r", "\n", "\t"):
+                        if self.modal_kb_field == 0:
+                            self.modal_kb_keys += c
+                        elif self.modal_kb_field == 1:
+                            self.modal_kb_action += c
+                        else:
+                            self.modal_kb_desc += c
+            except Exception:
+                pass
             return
 
         # 2. Si hay una ventana modal interactiva activa (input_autostart, input_theme_hex o input_creator_text)
@@ -2153,17 +2866,19 @@ class MecaTUI:
         # Salir o regresar con Esc / q
         if ch == b"\x1b" and len(ch) == 1 and self.view_mode == "theme_creator":
             self.view_mode = "main"
+            self.creator_is_editing = False
+            self.creator_editing_slug = ""
             self.current_section_idx = self._prev_main_section_idx
             self.selected_item_idx = 0
             self.content_scroll_offset = 0
-            self.status_message = "Creacion de tema cancelada."
+            self.status_message = "Edicion de tema cancelada."
             return
 
         if ch in (b"q", b"Q", b"\x1b") and len(ch) == 1:
             self.running = False
             return
 
-        # Eliminar entrada de autostart o tema personalizado con Supr / Delete (\x1b[3~) o 'x'
+        # Eliminar entrada de autostart, atajo o tema personalizado con Supr / Delete (\x1b[3~) o 'x'
         if ch in (b"\x1b[3~", b"x", b"X") and self.view_mode == "main":
             active_sections = self._get_active_sections()
             sec_id = active_sections[self.current_section_idx][1]
@@ -2181,12 +2896,24 @@ class MecaTUI:
                     cur_item = items[self.selected_item_idx]
                     if cur_item.key.startswith("user_theme:item:"):
                         t_slug = cur_item.key.split(":", 2)[-1]
-                        ok, msg = self.theme_engine.delete_user_theme(t_slug)
-                        self._sync_theme_into_settings()
-                        self.saved_settings = dict(self.settings)
-                        self.section_items = self._init_section_items()
-                        self.selected_item_idx = max(0, min(self.selected_item_idx, len(self.section_items["themes"]) - 1))
-                        self.status_message = msg
+                        self._prompt_delete_theme(t_slug)
+            elif sec_id == "keybinds":
+                items = self.section_items.get("keybinds", [])
+                if 0 <= self.selected_item_idx < len(items):
+                    cur_item = items[self.selected_item_idx]
+                    if cur_item.key.startswith("keybind:item:"):
+                        kb_idx = int(cur_item.key.split(":")[-1])
+                        if 0 <= kb_idx < len(self.keybind_items):
+                            entry = self.keybind_items[kb_idx]
+                            if entry.get("is_custom"):
+                                removed = self.keybind_items.pop(kb_idx)
+                                self.section_items["keybinds"] = self._build_keybinds_section_items()
+                                self.status_message = f"Atajo '{removed.get('desc')}' eliminado."
+                            else:
+                                entry["enabled"] = not bool(entry.get("enabled", True))
+                                self.section_items["keybinds"] = self._build_keybinds_section_items()
+                                st = "activado" if entry["enabled"] else "desactivado"
+                                self.status_message = f"Atajo '{entry.get('desc')}' {st} (Pulsa 'Aplicar')."
             return
 
         # Atajos rápidos físicos directos (a/s/g: Aplicar/Guardar, c: Cancelar, r: Restablecer)
@@ -2273,10 +3000,39 @@ class MecaTUI:
                 self.autostart_selected_app_name = ""
 
     def _handle_mouse_event(self, btn: int, x: int, y: int, act: bytes) -> None:
-        """Procesa clics, arrastres, rueda del ratón y movimiento hover (btn == 35)."""
+        """Procesa clics, clic secundario (btn == 2), arrastres, rueda del ratón y movimiento hover (btn == 35)."""
         cols, rows = shutil.get_terminal_size((84, 42))
         sidebar_w = self._get_sidebar_width(cols)
         active_sections = self._get_active_sections()
+
+        # 0. Si el menú contextual de clic secundario está abierto
+        if self.context_menu_open and not self.modal_state:
+            cy1, cy2, cx1, cx2 = self._context_box_bounds
+            if act == b"M" and btn == 35:
+                if cy1 <= y <= cy2 and cx1 <= x <= cx2 and y in self._context_row_map:
+                    self.hover_context_idx = self._context_row_map[y]
+                    self.context_menu_idx = self.hover_context_idx
+                else:
+                    self.hover_context_idx = None
+                return
+            if act == b"M" and btn in (64, 65):
+                if btn == 64:
+                    self.context_menu_idx = max(0, self.context_menu_idx - 1)
+                else:
+                    self.context_menu_idx = min(len(self.context_menu_items) - 1, self.context_menu_idx + 1)
+                return
+            if act == b"M" and btn == 0:
+                if cy1 <= y <= cy2 and cx1 <= x <= cx2 and y in self._context_row_map:
+                    c_idx = self._context_row_map[y]
+                    if 0 <= c_idx < len(self.context_menu_items):
+                        self._execute_context_action(self.context_menu_items[c_idx][0])
+                        return
+                self.context_menu_open = False
+                return
+            if act == b"M" and btn == 2:
+                self._open_context_menu(x, y, sidebar_w)
+                return
+            return
 
         # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
         if self.dropdown_open and not self.modal_state:
@@ -2307,7 +3063,7 @@ class MecaTUI:
                             self.modal_input_text = str(self._get_item_value(self.dropdown_item))
                             self.modal_selected_idx = 1
                             return
-                        elif chosen == "Escribir ruta...":
+                        elif chosen in ("Escribir ruta...", "Escribir distribucion..."):
                             self.modal_state = "input_creator_text"
                             self.modal_text_target = target_key
                             self.modal_input_text = str(self._get_item_value(self.dropdown_item))
@@ -2316,6 +3072,10 @@ class MecaTUI:
                         else:
                             self._set_item_value(target_key, chosen)
                 self.dropdown_open = False
+                return
+            if act == b"M" and btn == 2:
+                self.dropdown_open = False
+                self._open_context_menu(x, y, sidebar_w)
                 return
             return
 
@@ -2349,6 +3109,11 @@ class MecaTUI:
                 return
 
             if act == b"M" and btn == 0:
+                if self.modal_state in ("edit_keybind", "add_keybind"):
+                    for f_idx, (fy1, fy2, fx1, fx2) in self._kb_field_click_ranges.items():
+                        if fy1 <= y <= fy2 and fx1 <= x <= fx2:
+                            self.modal_kb_field = f_idx
+                            return
                 ky, kxmin, kxmax = self._modal_kind_click_range
                 if y == ky and kxmin <= x <= kxmax:
                     self._cycle_input_modal_kind()
@@ -2376,7 +3141,12 @@ class MecaTUI:
             return
 
         if act == b"M":
-            # 0. Movimiento de cursor sin clic (Hover: btn == 35)
+            # 0. Clic secundario / derecho (Right-Click: btn == 2) -> Abrir menú contextual
+            if btn == 2:
+                self._open_context_menu(x, y, sidebar_w)
+                return
+
+            # 0b. Movimiento de cursor sin clic (Hover: btn == 35)
             if btn == 35:
                 btn_y_min, btn_y_max = self._button_row_range
 
@@ -2538,7 +3308,7 @@ class MecaTUI:
 
                         elif item.item_type == "action":
                             c_start, c_end = info["control_range"]
-                            if c_start <= x <= c_end:
+                            if c_start <= x <= c_end or item.key.startswith("keybind:item:"):
                                 self._activate_current_item()
 
                         elif item.item_type == "theme_card":
@@ -2561,29 +3331,19 @@ class MecaTUI:
                         new_val = max(item.min_val, min(item.max_val, new_val))
                         self._set_item_value(item.key, new_val)
 
-            # 3. Rueda del ratón hacia arriba (Scroll Up: btn == 64)
+            # 3. Rueda del ratón hacia arriba (Scroll Up: btn == 64) — solo navega la lista, nunca altera el valor
             elif btn == 64:
                 if x <= sidebar_w:
                     self._request_section_change(self.current_section_idx - 1, focus_content=False)
                 else:
-                    info = self._content_click_map.get(y)
-                    if info and info["item"].item_type in ("stepper", "slider"):
-                        self.selected_item_idx = info["item_idx"]
-                        self._adjust_current_item(delta=1)
-                    else:
-                        self._move_content_selection(-1)
+                    self._move_content_selection(-1)
 
-            # 4. Rueda del ratón hacia abajo (Scroll Down: btn == 65)
+            # 4. Rueda del ratón hacia abajo (Scroll Down: btn == 65) — solo navega la lista, nunca altera el valor
             elif btn == 65:
                 if x <= sidebar_w:
                     self._request_section_change(self.current_section_idx + 1, focus_content=False)
                 else:
-                    info = self._content_click_map.get(y)
-                    if info and info["item"].item_type in ("stepper", "slider"):
-                        self.selected_item_idx = info["item_idx"]
-                        self._adjust_current_item(delta=-1)
-                    else:
-                        self._move_content_selection(1)
+                    self._move_content_selection(1)
 
     def _adjust_current_item(self, delta: int) -> None:
         """Modifica el valor del elemento seleccionado en memoria (se aplicará al pulsar 'Aplicar')."""
@@ -2604,7 +3364,7 @@ class MecaTUI:
             self._set_item_value(item.key, new_val)
 
         elif item.item_type == "select" and item.options:
-            valid_opts = [o for o in item.options if o not in ("Escribir #Hex...", "Escribir ruta...")]
+            valid_opts = [o for o in item.options if o not in ("Escribir #Hex...", "Escribir ruta...", "Escribir distribucion...")]
             if not valid_opts:
                 return
             cur = str(self._get_item_value(item))
@@ -2668,12 +3428,31 @@ class MecaTUI:
             self.status_message = f"Widget '{val}' seleccionado."
             return
 
+        if key == "input:kb_layout":
+            self.settings["kb_layout"] = str(val)
+            for it in self.section_items.get("devices", []):
+                if it.key == "input:kb_layout" and str(val) not in it.options:
+                    it.options.insert(0, str(val))
+            return
+
         if key == "input:kb_variant":
             self.settings["kb_variant"] = "" if str(val) == "none" else str(val)
             return
 
+        if key == "input:kb_model":
+            self.settings["kb_model"] = str(val)
+            return
+
+        if key == "input:kb_grp_toggle":
+            self.settings["kb_grp_toggle"] = "" if str(val) == "none" else str(val)
+            return
+
         if key == "input:compose_key":
             self.settings["compose_key"] = "ralt" if "Alt Gr" in str(val) else "caps"
+            return
+
+        if key == "cursor:theme":
+            self.settings["cursor_theme"] = str(val)
             return
 
         if key == "display:scale":
@@ -2714,7 +3493,7 @@ class MecaTUI:
             self.settings[key] = val
 
     def _execute_action(self, action_key: str) -> None:
-        """Ejecuta acciones especiales como modales de autostart, estudio de creación de temas o utilidades."""
+        """Ejecuta acciones especiales como modales de autostart, atajos, estudio de creación/edición de temas o utilidades."""
         if action_key == "action:add_autostart":
             self.installed_apps = self.config_sync.list_installed_applications()
             self.modal_state = "input_autostart"
@@ -2727,12 +3506,29 @@ class MecaTUI:
             self.modal_selected_idx = 1
             return
 
+        elif action_key == "action:add_keybind":
+            self.modal_state = "add_keybind"
+            self.modal_kb_idx = -1
+            self.modal_kb_field = 0
+            self.modal_kb_keys = "SUPER + "
+            self.modal_kb_action = "uwsm-app -- "
+            self.modal_kb_desc = "Nuevo atajo"
+            self.modal_selected_idx = 1
+            return
+
+        elif action_key.startswith("keybind:item:"):
+            kb_idx = int(action_key.split(":")[-1])
+            self._open_keybind_modal(kb_idx, initial_field=0)
+            return
+
         elif action_key == "action:create_theme":
             self._prev_main_section_idx = self.current_section_idx
             base_t = self.theme_engine.current_theme
             self.theme_creator_spec = self.theme_engine.get_theme_full_spec(base_t)
             self.theme_creator_spec["name"] = "mi-tema-omarchy"
             self.theme_creator_spec["base_theme"] = base_t
+            self.creator_is_editing = False
+            self.creator_editing_slug = ""
             for _, c_sec_id, _, _, _ in self.CREATOR_SECTIONS:
                 self.section_items[c_sec_id] = self._build_creator_section_items(c_sec_id)
             self.view_mode = "theme_creator"
@@ -2744,12 +3540,19 @@ class MecaTUI:
             self.status_message = "Nuevo tema: configura y pulsa 'Guardar'."
             return
 
+        elif action_key == "action:edit_theme":
+            target_t = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
+            self._open_theme_editor(target_t)
+            return
+
         elif action_key == "action:clone_theme":
             self._prev_main_section_idx = self.current_section_idx
-            base_t = self.theme_engine.current_theme
+            base_t = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
             self.theme_creator_spec = self.theme_engine.get_theme_full_spec(base_t)
             self.theme_creator_spec["name"] = f"{base_t}-custom"
             self.theme_creator_spec["base_theme"] = base_t
+            self.creator_is_editing = False
+            self.creator_editing_slug = ""
             for _, c_sec_id, _, _, _ in self.CREATOR_SECTIONS:
                 self.section_items[c_sec_id] = self._build_creator_section_items(c_sec_id)
             self.view_mode = "theme_creator"
@@ -2759,6 +3562,11 @@ class MecaTUI:
             self.content_scroll_offset = 0
             self.active_pane = "content"
             self.status_message = f"Duplicando '{base_t}': personaliza y pulsa 'Guardar'."
+            return
+
+        elif action_key == "action:delete_theme":
+            target_t = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
+            self._prompt_delete_theme(target_t)
             return
 
         elif action_key == "creator:name":
@@ -2868,20 +3676,41 @@ class MecaTUI:
 
     def save_all(self) -> None:
         """
-        En la ventana de creación de temas ('theme_creator'), guarda el nuevo tema en
+        En la ventana de creación/edición de temas ('theme_creator'), guarda el tema en
         /home/leonardo/.config/omarchy/themes/<slug> y regresa a la ventana de configuración.
         En la ventana principal ('main'), aplica y guarda todos los cambios.
         """
         if self.view_mode == "theme_creator":
             self.status_message = "Guardando tema..."
             self.render()
-            ok, msg = self.theme_engine.create_theme_from_spec(self.theme_creator_spec, activate=False)
+            new_slug = self.theme_engine.normalize_theme_slug(
+                str(self.theme_creator_spec.get("name", "mi-tema-omarchy"))
+            )
+            cur_active_slug = self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme)
+            should_activate = (new_slug == cur_active_slug) or (
+                self.creator_is_editing and self.creator_editing_slug == cur_active_slug
+            )
+            ok, msg = self.theme_engine.create_theme_from_spec(
+                self.theme_creator_spec, activate=should_activate
+            )
             if ok:
-                new_slug = self.theme_engine.normalize_theme_slug(
-                    str(self.theme_creator_spec.get("name", "mi-tema-omarchy"))
-                )
+                # Si el usuario renombró un tema de usuario al editarlo, limpiar el slug anterior
+                if (
+                    self.creator_is_editing
+                    and self.creator_editing_slug
+                    and self.creator_editing_slug != new_slug
+                ):
+                    user_slugs = {
+                        self.theme_engine.normalize_theme_slug(u)
+                        for u in self.theme_engine.list_user_themes()
+                    }
+                    if self.creator_editing_slug in user_slugs:
+                        self.theme_engine.delete_user_theme(self.creator_editing_slug)
+
                 self.available_themes = self.theme_engine.list_available_themes()
                 self.settings["omarchy_theme_name"] = new_slug
+                self.creator_is_editing = False
+                self.creator_editing_slug = ""
                 self.view_mode = "main"
                 self.section_items = self._init_section_items()
                 self.current_section_idx = self._prev_main_section_idx
@@ -2895,6 +3724,7 @@ class MecaTUI:
 
         ok_gui = self.config_sync.save_gui_settings(self.settings, apply_live=True)
         ok_auto = self.config_sync.save_autostart_items(self.autostart_items)
+        ok_kb = self.config_sync.save_keybinds(self.keybind_items)
 
         if self._has_bar_changes():
             self.config_sync.save_bar_settings(self.settings, reload_shell=True)
@@ -2910,9 +3740,10 @@ class MecaTUI:
             self._sync_theme_into_settings()
             self.section_items = self._init_section_items()
 
-        if ok_gui and ok_auto:
+        if ok_gui and ok_auto and ok_kb:
             self.saved_settings = dict(self.settings)
-            self.saved_autostart = [dict(x) for x in self.saved_autostart]
+            self.saved_autostart = [dict(x) for x in self.autostart_items]
+            self.saved_keybinds = [dict(x) for x in self.keybind_items]
             self.status_message = "✓ Cambios aplicados."
         else:
             self.status_message = "Error al aplicar configuracion."
@@ -2924,15 +3755,18 @@ class MecaTUI:
         """
         if self.view_mode == "theme_creator":
             self.view_mode = "main"
+            self.creator_is_editing = False
+            self.creator_editing_slug = ""
             self.current_section_idx = self._prev_main_section_idx
             self.selected_item_idx = 0
             self.content_scroll_offset = 0
             self.active_pane = "content"
-            self.status_message = "Creacion cancelada."
+            self.status_message = "Edicion cancelada."
             return
 
         self.settings = dict(self.saved_settings)
         self.autostart_items = [dict(x) for x in self.saved_autostart]
+        self.keybind_items = [dict(x) for x in self.saved_keybinds]
         self.running = False
 
     def reset_to_defaults(self) -> None:
@@ -2953,10 +3787,14 @@ class MecaTUI:
 
         defaults = self.config_sync.get_default_settings()
         self.settings.update(defaults)
+        self.keybind_items = [dict(x) for x in self.config_sync.DEFAULT_SYSTEM_KEYBINDS]
         self._sync_theme_into_settings()
         self._sync_autostart_into_settings()
         self.config_sync.save_gui_settings(self.settings, apply_live=True)
+        self.config_sync.save_keybinds(self.keybind_items)
         self.saved_settings = dict(self.settings)
+        self.saved_keybinds = [dict(x) for x in self.keybind_items]
+        self.section_items = self._init_section_items()
         self.status_message = "✓ Ajustes restablecidos a los valores predeterminados de Omarchy."
 
     def install_update_hook(self) -> None:

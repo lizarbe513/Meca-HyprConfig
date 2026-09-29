@@ -39,12 +39,136 @@ class ConfigSync:
         ("omarchy.dropbox", "bar_w_dropbox", "Dropbox", "off"),
     ]
 
+    # Catálogo completo de los atajos del sistema Omarchy/Hyprland (categoría, id, nombre, teclas_vista, teclas_lua, expresion_lua, comando_editable)
+    DEFAULT_SYSTEM_KEYBINDS = [
+        # APLICACIONES Y WEBAPPS (applications.lua)
+        ("APLICACIONES", "app_terminal", "Terminal", "SUPER + RETURN", "SUPER + RETURN", '{ omarchy = "terminal" }', "omarchy-launch-terminal"),
+        ("APLICACIONES", "app_browser", "Navegador web", "SUPER + SHIFT + RETURN", "SUPER + SHIFT + RETURN", '{ omarchy = "browser" }', "omarchy-launch-browser"),
+        ("APLICACIONES", "app_browser_b", "Navegador (Alt)", "SUPER + SHIFT + B", "SUPER + SHIFT + B", '{ omarchy = "browser" }', "omarchy-launch-browser"),
+        ("APLICACIONES", "app_browser_priv", "Navegador privado", "SUPER + SHIFT + ALT + B", "SUPER + SHIFT + ALT + B", '{ omarchy = "browser --private" }', "omarchy-launch-browser --private"),
+        ("APLICACIONES", "app_files", "Gestor de archivos", "SUPER + SHIFT + F", "SUPER + SHIFT + F", '{ omarchy = "nautilus" }', "omarchy-launch-nautilus"),
+        ("APLICACIONES", "app_files_cwd", "Archivos (carpeta actual)", "SUPER + ALT + SHIFT + F", "SUPER + ALT + SHIFT + F", '{ omarchy = "nautilus-cwd" }', "omarchy-launch-nautilus-cwd"),
+        ("APLICACIONES", "app_editor", "Editor de codigo", "SUPER + SHIFT + N", "SUPER + SHIFT + N", '{ omarchy = "editor" }', "omarchy-launch-editor"),
+        ("APLICACIONES", "app_tmux", "Terminal Tmux", "SUPER + ALT + RETURN", "SUPER + ALT + RETURN", '{ omarchy = "terminal-tmux" }', "omarchy-launch-terminal-tmux"),
+        ("APLICACIONES", "app_herdr", "Terminal Herdr", "SUPER + CTRL + RETURN", "SUPER + CTRL + RETURN", '{ omarchy = "terminal-herdr" }', "omarchy-launch-terminal-herdr"),
+        ("APLICACIONES", "app_music", "Musica (Spotify)", "SUPER + SHIFT + M", "SUPER + SHIFT + M", '{ omarchy = "spotify" }', "omarchy-launch-spotify"),
+        ("APLICACIONES", "app_music_tui", "Musica TUI (Cliamp)", "SUPER + SHIFT + ALT + M", "SUPER + SHIFT + ALT + M", '{ tui = "cliamp", focus = true }', "omarchy-launch-or-focus-tui cliamp"),
+        ("APLICACIONES", "app_docker", "Docker TUI", "SUPER + SHIFT + D", "SUPER + SHIFT + D", '{ tui = "omarchy-launch-docker-tui" }', "omarchy-launch-tui omarchy-launch-docker-tui"),
+        ("APLICACIONES", "app_signal", "Signal", "SUPER + SHIFT + G", "SUPER + SHIFT + G", '{ omarchy = "signal" }', "omarchy-launch-signal"),
+        ("APLICACIONES", "app_obsidian", "Obsidian", "SUPER + SHIFT + O", "SUPER + SHIFT + O", '{ launch = "obsidian", focus = "^obsidian$" }', "uwsm-app -- obsidian"),
+        ("APLICACIONES", "app_omawrite", "Omawrite", "SUPER + SHIFT + W", "SUPER + SHIFT + W", '{ launch = "omawrite" }', "uwsm-app -- omawrite"),
+        ("APLICACIONES", "app_passwords", "Contraseñas (1Password)", "SUPER + SHIFT + SLASH", "SUPER + SHIFT + SLASH", '{ omarchy = "1password" }', "omarchy-launch-1password"),
+        ("APLICACIONES", "app_chatgpt", "ChatGPT", "SUPER + SHIFT + A", "SUPER + SHIFT + A", '{ webapp = "https://chatgpt.com" }', "omarchy-launch-webapp https://chatgpt.com"),
+        ("APLICACIONES", "app_grok", "Grok", "SUPER + SHIFT + ALT + A", "SUPER + SHIFT + ALT + A", '{ webapp = "https://grok.com" }', "omarchy-launch-webapp https://grok.com"),
+        ("APLICACIONES", "app_calendar_web", "Calendario Web", "SUPER + SHIFT + C", "SUPER + SHIFT + C", '{ webapp = "https://app.hey.com/calendar/weeks/" }', "omarchy-launch-webapp https://app.hey.com/calendar/weeks/"),
+        ("APLICACIONES", "app_email", "Correo Web", "SUPER + SHIFT + E", "SUPER + SHIFT + E", '{ webapp = "https://app.hey.com" }', "omarchy-launch-webapp https://app.hey.com"),
+        ("APLICACIONES", "app_youtube", "YouTube", "SUPER + SHIFT + Y", "SUPER + SHIFT + Y", '{ webapp = "https://youtube.com/" }', "omarchy-launch-webapp https://youtube.com/"),
+        ("APLICACIONES", "app_whatsapp", "WhatsApp", "SUPER + SHIFT + ALT + G", "SUPER + SHIFT + ALT + G", '{ webapp = "https://web.whatsapp.com/", focus = true }', "omarchy-launch-webapp https://web.whatsapp.com/"),
+        ("APLICACIONES", "app_gmessages", "Google Messages", "SUPER + SHIFT + CTRL + G", "SUPER + SHIFT + CTRL + G", '{ webapp = "https://messages.google.com/web/conversations", focus = true }', "omarchy-launch-webapp https://messages.google.com/web/conversations"),
+        ("APLICACIONES", "app_gphotos", "Google Photos", "SUPER + SHIFT + P", "SUPER + SHIFT + P", '{ webapp = "https://photos.google.com/", focus = true }', "omarchy-launch-webapp https://photos.google.com/"),
+        ("APLICACIONES", "app_gmaps", "Google Maps", "SUPER + SHIFT + S", "SUPER + SHIFT + S", '{ webapp = "https://maps.google.com/", focus = true }', "omarchy-launch-webapp https://maps.google.com/"),
+        ("APLICACIONES", "app_x", "X (Twitter)", "SUPER + SHIFT + X", "SUPER + SHIFT + X", '{ webapp = "https://x.com/" }', "omarchy-launch-webapp https://x.com/"),
+        # MENUS Y UTILIDADES OMARCHY (utilities.lua)
+        ("MENUS Y UTILIDADES", "util_omarchy_menu", "Menu Omarchy", "SUPER + SPACE", "SUPER + SPACE", '"omarchy-menu toggle"', "omarchy-menu toggle"),
+        ("MENUS Y UTILIDADES", "util_apps_menu", "Lanzador de apps", "SUPER + ALT + SPACE", "SUPER + ALT + SPACE", '"omarchy-menu toggle apps"', "omarchy-menu toggle apps"),
+        ("MENUS Y UTILIDADES", "util_system_menu", "Menu de sistema", "SUPER + ESCAPE", "SUPER + ESCAPE", '"omarchy-menu toggle system"', "omarchy-menu toggle system"),
+        ("MENUS Y UTILIDADES", "util_theme_menu", "Menu de temas", "SUPER + SHIFT + CTRL + SPACE", "SUPER + SHIFT + CTRL + SPACE", '"omarchy-menu toggle theme"', "omarchy-menu toggle theme"),
+        ("MENUS Y UTILIDADES", "util_bg_menu", "Cambiar fondo", "SUPER + CTRL + SPACE", "SUPER + CTRL + SPACE", '"omarchy-menu toggle background"', "omarchy-menu toggle background"),
+        ("MENUS Y UTILIDADES", "util_toggle_bar", "Alternar barra superior", "SUPER + SHIFT + SPACE", "SUPER + SHIFT + SPACE", '"omarchy-toggle-bar"', "omarchy-toggle-bar"),
+        ("MENUS Y UTILIDADES", "util_capture_menu", "Menu de captura", "SUPER + CTRL + C", "SUPER + CTRL + C", '"omarchy-menu toggle capture"', "omarchy-menu toggle capture"),
+        ("MENUS Y UTILIDADES", "util_toggle_menu", "Menu de ajustes rapidos", "SUPER + CTRL + O", "SUPER + CTRL + O", '"omarchy-menu toggle toggle"', "omarchy-menu toggle toggle"),
+        ("MENUS Y UTILIDADES", "util_hw_menu", "Menu de hardware", "SUPER + CTRL + H", "SUPER + CTRL + H", '"omarchy-menu toggle hardware"', "omarchy-menu toggle hardware"),
+        ("MENUS Y UTILIDADES", "util_keybinds", "Lista de atajos", "SUPER + K", "SUPER + K", '"omarchy-menu-keybindings"', "omarchy-menu-keybindings"),
+        ("MENUS Y UTILIDADES", "util_tmux_keys", "Atajos de Tmux", "SUPER + ALT + K", "SUPER + ALT + K", '"omarchy-menu-tmux-keybindings"', "omarchy-menu-tmux-keybindings"),
+        ("MENUS Y UTILIDADES", "util_herdr_keys", "Atajos de Herdr", "SUPER + CTRL + K", "SUPER + CTRL + K", '"omarchy-menu-herdr-keybindings"', "omarchy-menu-herdr-keybindings"),
+        ("MENUS Y UTILIDADES", "util_calc", "Calculadora", "SUPER + CTRL + Q", "SUPER + CTRL + Q", '"omacalc"', "omacalc"),
+        ("MENUS Y UTILIDADES", "util_emojis", "Selector de emojis", "SUPER + CTRL + E", "SUPER + CTRL + E", '"omarchy-shell shell toggle omarchy.emojis"', "omarchy-shell shell toggle omarchy.emojis"),
+        ("MENUS Y UTILIDADES", "util_screenshot", "Captura de pantalla", "PRINT", "PRINT", '"omarchy-capture-screenshot"', "omarchy-capture-screenshot"),
+        ("MENUS Y UTILIDADES", "util_screenrec", "Grabar pantalla", "ALT + PRINT", "ALT + PRINT", '"omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord"', "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord"),
+        ("MENUS Y UTILIDADES", "util_colorpicker", "Selector de color", "SUPER + PRINT", "SUPER + PRINT", '"pkill hyprpicker || hyprpicker -a"', "pkill hyprpicker || hyprpicker -a"),
+        ("MENUS Y UTILIDADES", "util_ocr", "Extraer texto (OCR)", "SUPER + CTRL + PRINT", "SUPER + CTRL + PRINT", '"omarchy-capture-text"', "omarchy-capture-text"),
+        ("MENUS Y UTILIDADES", "util_share", "Compartir (LocalSend)", "SUPER + CTRL + S", "SUPER + CTRL + S", '"omarchy-menu toggle share"', "omarchy-menu toggle share"),
+        ("MENUS Y UTILIDADES", "util_lock", "Bloquear sesion", "SUPER + CTRL + L", "SUPER + CTRL + L", '"omarchy-system-lock"', "omarchy-system-lock"),
+        ("MENUS Y UTILIDADES", "util_idle", "Alternar autobloqueo", "SUPER + CTRL + I", "SUPER + CTRL + I", '"omarchy-toggle-idle"', "omarchy-toggle-idle"),
+        ("MENUS Y UTILIDADES", "util_nightlight", "Alternar luz nocturna", "SUPER + CTRL + N", "SUPER + CTRL + N", '"omarchy-toggle-nightlight"', "omarchy-toggle-nightlight"),
+        ("MENUS Y UTILIDADES", "util_audio_panel", "Panel de audio", "SUPER + CTRL + A", "SUPER + CTRL + A", '"omarchy-shell shell toggle omarchy.audio"', "omarchy-shell shell toggle omarchy.audio"),
+        ("MENUS Y UTILIDADES", "util_bt_panel", "Panel Bluetooth", "SUPER + CTRL + B", "SUPER + CTRL + B", '"omarchy-shell shell toggle omarchy.bluetooth"', "omarchy-shell shell toggle omarchy.bluetooth"),
+        ("MENUS Y UTILIDADES", "util_disp_panel", "Panel de pantalla", "SUPER + CTRL + D", "SUPER + CTRL + D", '"omarchy-shell shell toggle omarchy.monitor"', "omarchy-shell shell toggle omarchy.monitor"),
+        ("MENUS Y UTILIDADES", "util_net_panel", "Panel de red", "SUPER + CTRL + W", "SUPER + CTRL + W", '"omarchy-shell shell toggle omarchy.network"', "omarchy-shell shell toggle omarchy.network"),
+        ("MENUS Y UTILIDADES", "util_pow_panel", "Panel de energia", "SUPER + CTRL + P", "SUPER + CTRL + P", '"omarchy-shell shell toggle omarchy.power"', "omarchy-shell shell toggle omarchy.power"),
+        ("MENUS Y UTILIDADES", "util_btop", "Monitor de actividad", "SUPER + CTRL + T", "SUPER + CTRL + T", '{ tui = "btop" }', "omarchy-launch-tui btop"),
+        ("MENUS Y UTILIDADES", "util_notif_dismiss", "Cerrar notificacion", "SUPER + COMMA", "SUPER + comma", '"omarchy-shell notifications dismissOne"', "omarchy-shell notifications dismissOne"),
+        ("MENUS Y UTILIDADES", "util_notif_all", "Cerrar todas las notif.", "SUPER + SHIFT + COMMA", "SUPER + SHIFT + comma", '"omarchy-shell notifications dismissAll"', "omarchy-shell notifications dismissAll"),
+        ("MENUS Y UTILIDADES", "util_notif_silence", "Silenciar notificaciones", "SUPER + CTRL + COMMA", "SUPER + CTRL + comma", '"omarchy-toggle-notification-silencing"', "omarchy-toggle-notification-silencing"),
+        ("MENUS Y UTILIDADES", "util_notif_hist", "Historial notificaciones", "SUPER + SHIFT + ALT + COMMA", "SUPER + SHIFT + ALT + comma", '"omarchy-shell notifications showHistory"', "omarchy-shell notifications showHistory"),
+        # VENTANAS Y TILING (tiling.lua)
+        ("VENTANAS Y TILING", "win_close", "Cerrar ventana", "SUPER + W", "SUPER + W", "hl.dsp.window.close()", "hl.dsp.window.close()"),
+        ("VENTANAS Y TILING", "win_close_all", "Cerrar todas las ventanas", "CTRL + ALT + DELETE", "CTRL + ALT + DELETE", '"omarchy-hyprland-window-close-all"', "omarchy-hyprland-window-close-all"),
+        ("VENTANAS Y TILING", "win_split", "Alternar division", "SUPER + J", "SUPER + J", 'hl.dsp.layout("togglesplit")', 'hl.dsp.layout("togglesplit")'),
+        ("VENTANAS Y TILING", "win_pseudo", "Modo pseudo-tiling", "SUPER + P", "SUPER + P", "hl.dsp.window.pseudo()", "hl.dsp.window.pseudo()"),
+        ("VENTANAS Y TILING", "win_float", "Alternar flotante/mosaico", "SUPER + T", "SUPER + T", 'hl.dsp.window.float({ action = "toggle" })', 'hl.dsp.window.float({ action = "toggle" })'),
+        ("VENTANAS Y TILING", "win_fullscreen", "Pantalla completa", "SUPER + F", "SUPER + F", 'hl.dsp.window.fullscreen({ mode = "fullscreen" })', 'hl.dsp.window.fullscreen({ mode = "fullscreen" })'),
+        ("VENTANAS Y TILING", "win_tiled_fs", "Pantalla completa en mosaico", "SUPER + CTRL + F", "SUPER + CTRL + F", '"omarchy-hyprland-window-tiled-fullscreen-toggle"', "omarchy-hyprland-window-tiled-fullscreen-toggle"),
+        ("VENTANAS Y TILING", "win_fullwidth", "Maximizar ancho", "SUPER + ALT + F", "SUPER + ALT + F", 'hl.dsp.window.fullscreen({ mode = "maximized" })', 'hl.dsp.window.fullscreen({ mode = "maximized" })'),
+        ("VENTANAS Y TILING", "win_pop", "Fijar ventana flotante", "SUPER + O", "SUPER + O", '"omarchy-hyprland-window-pop"', "omarchy-hyprland-window-pop"),
+        ("VENTANAS Y TILING", "win_layout", "Alternar layout escritorio", "SUPER + L", "SUPER + L", '"omarchy-hyprland-workspace-layout-toggle"', "omarchy-hyprland-workspace-layout-toggle"),
+        ("VENTANAS Y TILING", "win_transparency", "Alternar transparencia", "SUPER + BACKSPACE", "SUPER + BACKSPACE", '"omarchy-hyprland-window-transparency-toggle"', "omarchy-hyprland-window-transparency-toggle"),
+        ("VENTANAS Y TILING", "win_gaps", "Alternar margenes (gaps)", "SUPER + SHIFT + BACKSPACE", "SUPER + SHIFT + BACKSPACE", '"omarchy-hyprland-window-gaps-toggle"', "omarchy-hyprland-window-gaps-toggle"),
+        ("VENTANAS Y TILING", "win_focus_l", "Enfocar ventana izquierda", "SUPER + LEFT", "SUPER + LEFT", 'hl.dsp.focus({ direction = "l" })', 'hl.dsp.focus({ direction = "l" })'),
+        ("VENTANAS Y TILING", "win_focus_r", "Enfocar ventana derecha", "SUPER + RIGHT", "SUPER + RIGHT", 'hl.dsp.focus({ direction = "r" })', 'hl.dsp.focus({ direction = "r" })'),
+        ("VENTANAS Y TILING", "win_focus_u", "Enfocar ventana superior", "SUPER + UP", "SUPER + UP", 'hl.dsp.focus({ direction = "u" })', 'hl.dsp.focus({ direction = "u" })'),
+        ("VENTANAS Y TILING", "win_focus_d", "Enfocar ventana inferior", "SUPER + DOWN", "SUPER + DOWN", 'hl.dsp.focus({ direction = "d" })', 'hl.dsp.focus({ direction = "d" })'),
+        ("VENTANAS Y TILING", "win_swap_l", "Intercambiar a la izquierda", "SUPER + SHIFT + LEFT", "SUPER + SHIFT + LEFT", 'hl.dsp.window.swap({ direction = "l" })', 'hl.dsp.window.swap({ direction = "l" })'),
+        ("VENTANAS Y TILING", "win_swap_r", "Intercambiar a la derecha", "SUPER + SHIFT + RIGHT", "SUPER + SHIFT + RIGHT", 'hl.dsp.window.swap({ direction = "r" })', 'hl.dsp.window.swap({ direction = "r" })'),
+        ("VENTANAS Y TILING", "win_swap_u", "Intercambiar hacia arriba", "SUPER + SHIFT + UP", "SUPER + SHIFT + UP", 'hl.dsp.window.swap({ direction = "u" })', 'hl.dsp.window.swap({ direction = "u" })'),
+        ("VENTANAS Y TILING", "win_swap_d", "Intercambiar hacia abajo", "SUPER + SHIFT + DOWN", "SUPER + SHIFT + DOWN", 'hl.dsp.window.swap({ direction = "d" })', 'hl.dsp.window.swap({ direction = "d" })'),
+        ("VENTANAS Y TILING", "win_cycle_next", "Siguiente ventana", "ALT + TAB", "ALT + TAB", "hl.dsp.window.cycle_next()", "hl.dsp.window.cycle_next()"),
+        ("VENTANAS Y TILING", "win_cycle_prev", "Ventana anterior", "ALT + SHIFT + TAB", "ALT + SHIFT + TAB", "hl.dsp.window.cycle_next({ next = false })", "hl.dsp.window.cycle_next({ next = false })"),
+        ("VENTANAS Y TILING", "win_group", "Agrupar ventanas", "SUPER + G", "SUPER + G", "hl.dsp.group.toggle()", "hl.dsp.group.toggle()"),
+        ("VENTANAS Y TILING", "win_ungroup", "Sacar de grupo", "SUPER + ALT + G", "SUPER + ALT + G", "hl.dsp.window.move({ out_of_group = true })", "hl.dsp.window.move({ out_of_group = true })"),
+        ("VENTANAS Y TILING", "win_group_next", "Siguiente en grupo", "SUPER + ALT + TAB", "SUPER + ALT + TAB", "hl.dsp.group.next()", "hl.dsp.group.next()"),
+        ("VENTANAS Y TILING", "win_group_prev", "Anterior en grupo", "SUPER + ALT + SHIFT + TAB", "SUPER + ALT + SHIFT + TAB", "hl.dsp.group.prev()", "hl.dsp.group.prev()"),
+        # ESCRITORIOS (WORKSPACES)
+        ("ESCRITORIOS", "ws_scratchpad", "Mostrar scratchpad", "SUPER + S", "SUPER + S", 'hl.dsp.workspace.toggle_special("scratchpad")', 'hl.dsp.workspace.toggle_special("scratchpad")'),
+        ("ESCRITORIOS", "ws_to_scratch", "Enviar a scratchpad", "SUPER + ALT + S", "SUPER + ALT + S", 'hl.dsp.window.move({ workspace = "special:scratchpad", follow = false })', 'hl.dsp.window.move({ workspace = "special:scratchpad", follow = false })'),
+        ("ESCRITORIOS", "ws_next", "Siguiente escritorio", "SUPER + TAB", "SUPER + TAB", 'hl.dsp.focus({ workspace = "e+1" })', 'hl.dsp.focus({ workspace = "e+1" })'),
+        ("ESCRITORIOS", "ws_prev", "Escritorio anterior", "SUPER + SHIFT + TAB", "SUPER + SHIFT + TAB", 'hl.dsp.focus({ workspace = "e-1" })', 'hl.dsp.focus({ workspace = "e-1" })'),
+        ("ESCRITORIOS", "ws_former", "Ultimo escritorio usado", "SUPER + CTRL + TAB", "SUPER + CTRL + TAB", 'hl.dsp.focus({ workspace = "previous" })', 'hl.dsp.focus({ workspace = "previous" })'),
+        ("ESCRITORIOS", "ws_1", "Ir al escritorio 1", "SUPER + 1", "SUPER + code:10", 'hl.dsp.focus({ workspace = "1" })', 'hl.dsp.focus({ workspace = "1" })'),
+        ("ESCRITORIOS", "ws_2", "Ir al escritorio 2", "SUPER + 2", "SUPER + code:11", 'hl.dsp.focus({ workspace = "2" })', 'hl.dsp.focus({ workspace = "2" })'),
+        ("ESCRITORIOS", "ws_3", "Ir al escritorio 3", "SUPER + 3", "SUPER + code:12", 'hl.dsp.focus({ workspace = "3" })', 'hl.dsp.focus({ workspace = "3" })'),
+        ("ESCRITORIOS", "ws_4", "Ir al escritorio 4", "SUPER + 4", "SUPER + code:13", 'hl.dsp.focus({ workspace = "4" })', 'hl.dsp.focus({ workspace = "4" })'),
+        ("ESCRITORIOS", "ws_5", "Ir al escritorio 5", "SUPER + 5", "SUPER + code:14", 'hl.dsp.focus({ workspace = "5" })', 'hl.dsp.focus({ workspace = "5" })'),
+        ("ESCRITORIOS", "ws_6", "Ir al escritorio 6", "SUPER + 6", "SUPER + code:15", 'hl.dsp.focus({ workspace = "6" })', 'hl.dsp.focus({ workspace = "6" })'),
+        ("ESCRITORIOS", "ws_7", "Ir al escritorio 7", "SUPER + 7", "SUPER + code:16", 'hl.dsp.focus({ workspace = "7" })', 'hl.dsp.focus({ workspace = "7" })'),
+        ("ESCRITORIOS", "ws_8", "Ir al escritorio 8", "SUPER + 8", "SUPER + code:17", 'hl.dsp.focus({ workspace = "8" })', 'hl.dsp.focus({ workspace = "8" })'),
+        ("ESCRITORIOS", "ws_9", "Ir al escritorio 9", "SUPER + 9", "SUPER + code:18", 'hl.dsp.focus({ workspace = "9" })', 'hl.dsp.focus({ workspace = "9" })'),
+        ("ESCRITORIOS", "ws_10", "Ir al escritorio 10", "SUPER + 0", "SUPER + code:19", 'hl.dsp.focus({ workspace = "10" })', 'hl.dsp.focus({ workspace = "10" })'),
+        ("ESCRITORIOS", "ws_mv_1", "Mover ventana a escr. 1", "SUPER + SHIFT + 1", "SUPER + SHIFT + code:10", 'hl.dsp.window.move({ workspace = "1" })', 'hl.dsp.window.move({ workspace = "1" })'),
+        ("ESCRITORIOS", "ws_mv_2", "Mover ventana a escr. 2", "SUPER + SHIFT + 2", "SUPER + SHIFT + code:11", 'hl.dsp.window.move({ workspace = "2" })', 'hl.dsp.window.move({ workspace = "2" })'),
+        ("ESCRITORIOS", "ws_mv_3", "Mover ventana a escr. 3", "SUPER + SHIFT + 3", "SUPER + SHIFT + code:12", 'hl.dsp.window.move({ workspace = "3" })', 'hl.dsp.window.move({ workspace = "3" })'),
+        ("ESCRITORIOS", "ws_mv_4", "Mover ventana a escr. 4", "SUPER + SHIFT + 4", "SUPER + SHIFT + code:13", 'hl.dsp.window.move({ workspace = "4" })', 'hl.dsp.window.move({ workspace = "4" })'),
+        ("ESCRITORIOS", "ws_mv_5", "Mover ventana a escr. 5", "SUPER + SHIFT + 5", "SUPER + SHIFT + code:14", 'hl.dsp.window.move({ workspace = "5" })', 'hl.dsp.window.move({ workspace = "5" })'),
+        # PORTAPAPELES Y MULTIMEDIA
+        ("PORTAPAPELES Y MEDIA", "clip_mgr", "Gestor de portapapeles", "SUPER + CTRL + V", "SUPER + CTRL + V", '"omarchy-shell shell toggle omarchy.clipboard"', "omarchy-shell shell toggle omarchy.clipboard"),
+        ("PORTAPAPELES Y MEDIA", "media_vol_up", "Subir volumen", "XF86AudioRaiseVolume", "XF86AudioRaiseVolume", '"omarchy-audio-output-volume raise"', "omarchy-audio-output-volume raise"),
+        ("PORTAPAPELES Y MEDIA", "media_vol_dn", "Bajar volumen", "XF86AudioLowerVolume", "XF86AudioLowerVolume", '"omarchy-audio-output-volume lower"', "omarchy-audio-output-volume lower"),
+        ("PORTAPAPELES Y MEDIA", "media_mute", "Silenciar audio", "XF86AudioMute", "XF86AudioMute", '"omarchy-audio-output-volume mute-toggle"', "omarchy-audio-output-volume mute-toggle"),
+        ("PORTAPAPELES Y MEDIA", "media_mic", "Silenciar microfono", "XF86AudioMicMute", "XF86AudioMicMute", '"omarchy-audio-input-mute"', "omarchy-audio-input-mute"),
+        ("PORTAPAPELES Y MEDIA", "media_bri_up", "Subir brillo", "XF86MonBrightnessUp", "XF86MonBrightnessUp", '"omarchy-brightness-display +5%"', "omarchy-brightness-display +5%"),
+        ("PORTAPAPELES Y MEDIA", "media_bri_dn", "Bajar brillo", "XF86MonBrightnessDown", "XF86MonBrightnessDown", '"omarchy-brightness-display 5%-"', "omarchy-brightness-display 5%-"),
+        ("PORTAPAPELES Y MEDIA", "media_play", "Reproducir / Pausar", "XF86AudioPlay", "XF86AudioPlay", '"omarchy-shell media playPause"', "omarchy-shell media playPause"),
+        ("PORTAPAPELES Y MEDIA", "media_next", "Siguiente pista", "XF86AudioNext", "XF86AudioNext", '"omarchy-shell media next"', "omarchy-shell media next"),
+        ("PORTAPAPELES Y MEDIA", "media_prev", "Pista anterior", "XF86AudioPrev", "XF86AudioPrev", '"omarchy-shell media previous"', "omarchy-shell media previous"),
+    ]
+
     def __init__(self):
         self.hypr_dir = Path.home() / ".config" / "hypr"
         self.gui_file = self.hypr_dir / "hyprland-gui.lua"
         self.input_file = self.hypr_dir / "input.lua"
         self.monitors_file = self.hypr_dir / "monitors.lua"
         self.autostart_file = self.hypr_dir / "autostart.lua"
+        self.bindings_file = self.hypr_dir / "bindings.lua"
         self.hyprland_file = self.hypr_dir / "hyprland.lua"
         self.shell_json_file = Path.home() / ".config" / "omarchy" / "shell.json"
         self.default_shell_json = Path("/usr/share/omarchy/config/omarchy/shell.json")
@@ -55,6 +179,27 @@ class ConfigSync:
         """Crea el directorio de configuración si no existe."""
         self.hypr_dir.mkdir(parents=True, exist_ok=True)
         self.shell_json_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def list_cursor_themes(self) -> List[str]:
+        """Descubre los temas de cursor instalados en el sistema y directorio del usuario."""
+        found: List[str] = ["default"]
+        icon_dirs = [
+            Path("/usr/share/icons"),
+            Path("/usr/local/share/icons"),
+            Path.home() / ".local" / "share" / "icons",
+            Path.home() / ".icons",
+        ]
+        for root in icon_dirs:
+            if not root.exists() or not root.is_dir():
+                continue
+            for entry in sorted(root.iterdir()):
+                if entry.is_dir() and (entry / "cursors").is_dir():
+                    if entry.name not in found:
+                        found.append(entry.name)
+        for fallback in ("Adwaita", "Yaru"):
+            if fallback not in found and (Path("/usr/share/icons") / fallback).exists():
+                found.append(fallback)
+        return found
 
     def get_default_settings(self) -> Dict[str, Any]:
         """Retorna el diccionario completo de ajustes por defecto de Hyprland y Barra Omarchy."""
@@ -105,6 +250,7 @@ class ConfigSync:
             "anim_workspaces": "slide",
             "anim_special": "slidevert",
             # Cursor
+            "cursor_theme": "default",
             "cursor_size": 24,
             "no_hw_cursors": True,
             "cursor_timeout": 0,
@@ -114,8 +260,10 @@ class ConfigSync:
             "cursor_zoom": 1.0,
             "cursor_zoom_rigid": False,
             # Keybinds & Keyboard Input
-            "kb_layout": "us",
+            "kb_layout": "es",
             "kb_variant": "",
+            "kb_model": "pc105",
+            "kb_grp_toggle": "Alt Izq + Alt Der",
             "compose_key": "ralt",
             "repeat_rate": 40,
             "repeat_delay": 250,
@@ -303,13 +451,14 @@ class ConfigSync:
             "general:layout": "layout",
             "input:kb_layout": "kb_layout",
             "input:kb_variant": "kb_variant",
+            "input:kb_model": "kb_model",
             "input:accel_profile": "accel_profile",
             "master:new_status": "master_new_status",
             "master:orientation": "master_orientation",
         }
         for hypr_k, s_k in live_str_map.items():
             val = HyprIPC.get_option(hypr_k)
-            if isinstance(val, str):
+            if isinstance(val, str) and val.strip():
                 settings[s_k] = val.strip()
 
         # 5. Parsear gaps (pueden venir como "5 5 5 5" en custom)
@@ -322,13 +471,38 @@ class ConfigSync:
                 if first.isdigit():
                     settings[s_k] = int(first)
 
-        # 6. Verificar compose_key en input.lua o hyprctl
+        # 6. Verificar compose_key y cambio de grupo en input.lua o hyprctl
         kb_opts = HyprIPC.get_option("input:kb_options")
         if isinstance(kb_opts, str):
             if "compose:caps" in kb_opts:
                 settings["compose_key"] = "caps"
             elif "compose:ralt" in kb_opts:
                 settings["compose_key"] = "ralt"
+            if "grp:alt_shift_toggle" in kb_opts:
+                settings["kb_grp_toggle"] = "Alt + Shift"
+            elif "grp:win_space_toggle" in kb_opts:
+                settings["kb_grp_toggle"] = "Super + Espacio"
+            elif "grp:ctrl_shift_toggle" in kb_opts:
+                settings["kb_grp_toggle"] = "Ctrl + Shift"
+            elif "grp:alts_toggle" in kb_opts:
+                settings["kb_grp_toggle"] = "Alt Izq + Alt Der"
+
+        # 6b. Detectar tema del cursor actual desde entorno o gsettings
+        env_cursor = os.environ.get("XCURSOR_THEME") or os.environ.get("HYPRCURSOR_THEME")
+        if env_cursor:
+            settings["cursor_theme"] = env_cursor.strip()
+        else:
+            try:
+                res_ct = subprocess.run(
+                    ["gsettings", "get", "org.gnome.desktop.interface", "cursor-theme"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                if res_ct.returncode == 0 and res_ct.stdout.strip():
+                    settings["cursor_theme"] = res_ct.stdout.strip().strip("'\"")
+            except Exception:
+                pass
 
         # 7. Leer metadatos guardados en hyprland-gui.lua, hyprland.lua y monitors.lua
         if self.gui_file.exists():
@@ -340,16 +514,6 @@ class ConfigSync:
                     for k, v in saved_meta.items():
                         if k in settings:
                             settings[k] = v
-            except Exception:
-                pass
-
-        if self.hyprland_file.exists():
-            try:
-                hl_txt = self.hyprland_file.read_text(encoding="utf-8")
-                if re.search(r"^\s*omarchy_default_bindings\s*=\s*false", hl_txt, re.M):
-                    settings["omarchy_default_bindings"] = False
-                if re.search(r"^\s*omarchy_preinstalled_bindings\s*=\s*false", hl_txt, re.M):
-                    settings["omarchy_preinstalled_bindings"] = False
             except Exception:
                 pass
 
@@ -529,6 +693,152 @@ class ConfigSync:
             return False
 
     # =========================================================================
+    # GESTIÓN DE ATAJOS DE TECLADO DEL SISTEMA (~/.config/hypr/bindings.lua)
+    # =========================================================================
+
+    def load_keybinds(self) -> List[Dict[str, Any]]:
+        """
+        Carga todos los atajos del sistema Omarchy junto con las ediciones y atajos
+        personalizados del usuario en ~/.config/hypr/bindings.lua.
+        """
+        binds: List[Dict[str, Any]] = []
+        by_id: Dict[str, Dict[str, Any]] = {}
+
+        for cat, b_id, title, disp_k, lua_k, lua_expr, edit_cmd in self.DEFAULT_SYSTEM_KEYBINDS:
+            entry = {
+                "id": b_id,
+                "category": cat,
+                "title": title,
+                "keys": disp_k,
+                "default_keys": disp_k,
+                "orig_lua_key": lua_k,
+                "default_lua_expr": lua_expr,
+                "cmd": edit_cmd,
+                "default_cmd": edit_cmd,
+                "enabled": True,
+                "is_custom": False,
+            }
+            binds.append(entry)
+            by_id[b_id] = entry
+
+        if self.bindings_file.exists():
+            try:
+                txt = self.bindings_file.read_text(encoding="utf-8")
+                m_meta = re.search(r"^--\s*MECA_KEYBINDS_META:\s*(\{.+\})\s*$", txt, re.M)
+                if m_meta:
+                    meta = json.loads(m_meta.group(1))
+                    overrides = meta.get("overrides", {})
+                    for b_id, ov in overrides.items():
+                        if b_id in by_id and isinstance(ov, dict):
+                            if "keys" in ov:
+                                by_id[b_id]["keys"] = str(ov["keys"])
+                            if "cmd" in ov:
+                                by_id[b_id]["cmd"] = str(ov["cmd"])
+                            if "enabled" in ov:
+                                by_id[b_id]["enabled"] = bool(ov["enabled"])
+                    for c_idx, cust in enumerate(meta.get("custom", [])):
+                        if isinstance(cust, dict) and cust.get("keys") and cust.get("cmd"):
+                            binds.append({
+                                "id": f"custom_{c_idx}",
+                                "category": "PERSONALIZADOS",
+                                "title": str(cust.get("title") or cust.get("cmd")),
+                                "keys": str(cust.get("keys")),
+                                "default_keys": str(cust.get("keys")),
+                                "orig_lua_key": str(cust.get("keys")),
+                                "default_lua_expr": json.dumps(str(cust.get("cmd"))),
+                                "cmd": str(cust.get("cmd")),
+                                "default_cmd": str(cust.get("cmd")),
+                                "enabled": bool(cust.get("enabled", True)),
+                                "is_custom": True,
+                            })
+            except Exception:
+                pass
+
+        return binds
+
+    @staticmethod
+    def _display_key_to_lua(keys_str: str) -> str:
+        """Convierte teclas de visualización (ej. SUPER + 1 o SUPER + COMMA) al formato Lua de Hyprland."""
+        parts = [p.strip() for p in keys_str.split("+") if p.strip()]
+        if not parts:
+            return keys_str.strip()
+        last = parts[-1]
+        if last.isdigit() and len(last) == 1:
+            num = 10 if last == "0" else int(last)
+            parts[-1] = f"code:{num + 9}"
+        elif last.upper() == "COMMA":
+            parts[-1] = "comma"
+        return " + ".join(parts)
+
+    def save_keybinds(self, binds: List[Dict[str, Any]]) -> bool:
+        """
+        Persiste las modificaciones de atajos del sistema y atajos personalizados
+        en ~/.config/hypr/bindings.lua usando hl.unbind(...) y o.bind(...).
+        """
+        overrides: Dict[str, Dict[str, Any]] = {}
+        custom_list: List[Dict[str, Any]] = []
+        lua_lines: List[str] = []
+
+        for entry in binds:
+            if entry.get("is_custom"):
+                c_title = str(entry.get("title") or entry.get("cmd") or "Atajo")
+                c_keys = str(entry.get("keys", "")).strip()
+                c_cmd = str(entry.get("cmd", "")).strip()
+                c_en = bool(entry.get("enabled", True))
+                if not c_keys or not c_cmd:
+                    continue
+                custom_list.append({
+                    "title": c_title,
+                    "keys": c_keys,
+                    "cmd": c_cmd,
+                    "enabled": c_en,
+                })
+                if c_en:
+                    lua_k = self._display_key_to_lua(c_keys)
+                    expr = c_cmd if c_cmd.startswith("hl.dsp.") or c_cmd.startswith("{") else json.dumps(c_cmd)
+                    lua_lines.append(f'o.bind({json.dumps(lua_k)}, {json.dumps(c_title)}, {expr})')
+            else:
+                b_id = str(entry.get("id", ""))
+                keys = str(entry.get("keys", "")).strip()
+                def_keys = str(entry.get("default_keys", "")).strip()
+                orig_lua_k = str(entry.get("orig_lua_key", def_keys))
+                cmd = str(entry.get("cmd", "")).strip()
+                def_cmd = str(entry.get("default_cmd", "")).strip()
+                def_lua_expr = str(entry.get("default_lua_expr", json.dumps(def_cmd)))
+                en = bool(entry.get("enabled", True))
+                title = str(entry.get("title", ""))
+
+                changed_keys = (keys.upper() != def_keys.upper())
+                changed_cmd = (cmd != def_cmd)
+                if not en or changed_keys or changed_cmd:
+                    overrides[b_id] = {
+                        "keys": keys,
+                        "cmd": cmd,
+                        "enabled": en,
+                    }
+                    lua_lines.append(f'hl.unbind({json.dumps(orig_lua_k)})')
+                    if en and keys:
+                        new_lua_k = self._display_key_to_lua(keys) if changed_keys else orig_lua_k
+                        if changed_cmd:
+                            expr = cmd if (cmd.startswith("hl.dsp.") or cmd.startswith("{")) else json.dumps(cmd)
+                        else:
+                            expr = def_lua_expr
+                        lua_lines.append(f'o.bind({json.dumps(new_lua_k)}, {json.dumps(title)}, {expr})')
+
+        meta_json = json.dumps({"overrides": overrides, "custom": custom_list}, ensure_ascii=False)
+        header = [
+            "-- Keep only your personal keybinding overrides here. Add new bindings or",
+            "-- unbind defaults before replacing them.",
+            f"-- MECA_KEYBINDS_META: {meta_json}",
+            "",
+        ]
+        try:
+            self.bindings_file.write_text("\n".join(header + lua_lines) + "\n", encoding="utf-8")
+            return True
+        except Exception:
+            return False
+
+    # =========================================================================
     # PERSISTENCIA COMPLETA EN ARCHIVOS LUA DE HYPRLAND
     # =========================================================================
 
@@ -537,30 +847,13 @@ class ConfigSync:
         return "true" if bool(val) else "false"
 
     def _update_hyprland_lua_binding_flags(self, settings: Dict[str, Any]) -> None:
-        """Actualiza omarchy_default_bindings y omarchy_preinstalled_bindings en ~/.config/hypr/hyprland.lua."""
+        """Asegura que require('hyprland-gui') esté presente en ~/.config/hypr/hyprland.lua sin desactivar los atajos del sistema."""
         if not self.hyprland_file.exists():
             return
         try:
             txt = self.hyprland_file.read_text(encoding="utf-8")
-            def_b = bool(settings.get("omarchy_default_bindings", True))
-            pre_b = bool(settings.get("omarchy_preinstalled_bindings", True))
-
-            # Reemplazar o insertar antes de require("default.hypr.omarchy")
             txt = re.sub(r"^\s*omarchy_default_bindings\s*=\s*(true|false)\s*\n?", "", txt, flags=re.M)
             txt = re.sub(r"^\s*omarchy_preinstalled_bindings\s*=\s*(true|false)\s*\n?", "", txt, flags=re.M)
-
-            flags_block = ""
-            if not def_b:
-                flags_block += "omarchy_default_bindings = false\n"
-            if not pre_b:
-                flags_block += "omarchy_preinstalled_bindings = false\n"
-
-            if flags_block:
-                target = 'require("default.hypr.omarchy")'
-                if target in txt:
-                    txt = txt.replace(target, flags_block + target, 1)
-                else:
-                    txt = flags_block + txt
 
             if 'require("hyprland-gui")' not in txt:
                 txt += '\n-- HyprMod & Meca managed settings\nrequire("hyprland-gui")\n'
@@ -583,7 +876,10 @@ class ConfigSync:
             "anim_workspaces_enabled": bool(settings.get("anim_workspaces_enabled", False)),
             "anim_workspaces": settings.get("anim_workspaces", "slide"),
             "anim_special": settings.get("anim_special", "slidevert"),
+            "cursor_theme": str(settings.get("cursor_theme", "default")),
             "cursor_size": int(settings.get("cursor_size", 24)),
+            "kb_model": str(settings.get("kb_model", "pc105")),
+            "kb_grp_toggle": str(settings.get("kb_grp_toggle", "Alt Izq + Alt Der")),
             "workspace_swipe": bool(settings.get("workspace_swipe", False)),
             "workspace_count": int(settings.get("workspace_count", 5)),
             "workspace_layout": str(settings.get("workspace_layout", "dwindle")),
@@ -617,6 +913,7 @@ class ConfigSync:
         ws_style = str(settings.get("anim_workspaces", "slide"))
         sp_style = str(settings.get("anim_special", "slidevert"))
         fade_en = b(settings.get("anim_fade_enabled", True))
+        c_theme = str(settings.get("cursor_theme", "default")).strip() or "default"
         c_size = int(settings.get("cursor_size", 24))
 
         # Aspect ratio de ventana única
@@ -624,9 +921,21 @@ class ConfigSync:
         ax = int(aspect_parts[0]) if len(aspect_parts) >= 2 and aspect_parts[0].isdigit() else 0
         ay = int(aspect_parts[1]) if len(aspect_parts) >= 2 and aspect_parts[1].isdigit() else 0
 
-        # Opciones de teclado (Compose)
+        # Opciones de teclado (Compose + Cambio de distribución)
         compose_opt = "compose:ralt" if settings.get("compose_key", "ralt") == "ralt" else "compose:caps"
-        kb_options_str = f"{compose_opt},shift:both_capslock_cancel"
+        grp_label = str(settings.get("kb_grp_toggle", "Alt Izq + Alt Der"))
+        grp_map = {
+            "Alt Izq + Alt Der": "grp:alts_toggle",
+            "Alt + Shift": "grp:alt_shift_toggle",
+            "Super + Espacio": "grp:win_space_toggle",
+            "Ctrl + Shift": "grp:ctrl_shift_toggle",
+            "Ninguno": "",
+        }
+        grp_opt = grp_map.get(grp_label, "grp:alts_toggle")
+        opt_parts = [compose_opt, "shift:both_capslock_cancel"]
+        if grp_opt:
+            opt_parts.append(grp_opt)
+        kb_options_str = ",".join(opt_parts)
 
         # Reglas de espacios de trabajo persistentes
         ws_count = max(1, min(10, int(settings.get("workspace_count", 5))))
@@ -673,6 +982,8 @@ class ConfigSync:
         lua_content = f"""-- Generado automáticamente por Meca HyprConfig (MECA)
 -- MECA_META: {meta_json}
 
+hl.env("XCURSOR_THEME", "{c_theme}")
+hl.env("HYPRCURSOR_THEME", "{c_theme}")
 hl.env("XCURSOR_SIZE", "{c_size}")
 hl.env("HYPRCURSOR_SIZE", "{c_size}")
 
@@ -733,8 +1044,9 @@ hl.config({{
     zoom_rigid = {b(settings.get('cursor_zoom_rigid', False))},
   }},
   input = {{
-    kb_layout = "{settings.get('kb_layout', 'us')}",
+    kb_layout = "{settings.get('kb_layout', 'es')}",
     kb_variant = "{settings.get('kb_variant', '')}",
+    kb_model = "{settings.get('kb_model', 'pc105')}",
     kb_options = "{kb_options_str}",
     repeat_rate = {int(settings.get('repeat_rate', 40))},
     repeat_delay = {int(settings.get('repeat_delay', 250))},
@@ -819,6 +1131,24 @@ hl.animation({{ leaf = "specialWorkspace", enabled = true, speed = {3.0 * spd_mu
             self.save_bar_settings(settings, reload_shell=apply_live)
 
             if apply_live:
+                subprocess.run(
+                    ["hyprctl", "setcursor", c_theme, str(c_size)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
+                subprocess.run(
+                    ["gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", c_theme],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
+                subprocess.run(
+                    ["gsettings", "set", "org.gnome.desktop.interface", "cursor-size", str(c_size)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
                 HyprIPC.reload()
 
             return True
