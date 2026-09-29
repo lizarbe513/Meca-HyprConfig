@@ -696,16 +696,11 @@ class ConfigSync:
     # GESTIÓN DE ATAJOS DE TECLADO DEL SISTEMA (~/.config/hypr/bindings.lua)
     # =========================================================================
 
-    def load_keybinds(self) -> List[Dict[str, Any]]:
-        """
-        Carga todos los atajos del sistema Omarchy junto con las ediciones y atajos
-        personalizados del usuario en ~/.config/hypr/bindings.lua.
-        """
+    def get_default_keybinds(self) -> List[Dict[str, Any]]:
+        """Devuelve la lista predeterminada de atajos del sistema Omarchy como diccionarios."""
         binds: List[Dict[str, Any]] = []
-        by_id: Dict[str, Dict[str, Any]] = {}
-
         for cat, b_id, title, disp_k, lua_k, lua_expr, edit_cmd in self.DEFAULT_SYSTEM_KEYBINDS:
-            entry = {
+            binds.append({
                 "id": b_id,
                 "category": cat,
                 "title": title,
@@ -717,9 +712,16 @@ class ConfigSync:
                 "default_cmd": edit_cmd,
                 "enabled": True,
                 "is_custom": False,
-            }
-            binds.append(entry)
-            by_id[b_id] = entry
+            })
+        return binds
+
+    def load_keybinds(self) -> List[Dict[str, Any]]:
+        """
+        Carga todos los atajos del sistema Omarchy junto con las ediciones y atajos
+        personalizados del usuario en ~/.config/hypr/bindings.lua.
+        """
+        binds = self.get_default_keybinds()
+        by_id: Dict[str, Dict[str, Any]] = {entry["id"]: entry for entry in binds}
 
         if self.bindings_file.exists():
             try:

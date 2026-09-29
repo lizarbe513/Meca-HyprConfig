@@ -710,8 +710,16 @@ class MecaTUI:
                 if self._frame_count == 2:
                     # Re-aplicar geometría vertical por si la terminal tardó unos ms en mapearse en Wayland
                     HyprIPC.ensure_floating_centered(width=680, height=960)
-                self.render()
-                self.handle_input(fd)
+                try:
+                    self.render()
+                    self.handle_input(fd)
+                except KeyboardInterrupt:
+                    self.running = False
+                except Exception as exc:
+                    self.modal_state = None
+                    self.dropdown_open = False
+                    self.context_menu_open = False
+                    self.status_message = f"Error: {exc}"
         finally:
             # Deshabilitar ratón y hover, reactivar auto-wrap (?7h), mostrar cursor y salir de alternate buffer
             sys.stdout.write("\033[?1006l\033[?1003l\033[?1002l\033[?1000l\033[?7h\033[?25h\033[?1049l\033[0m")
@@ -1628,26 +1636,29 @@ class MecaTUI:
             if 0 <= kb_idx < len(self.keybind_items):
                 cur_en = bool(self.keybind_items[kb_idx].get("enabled", True))
                 self.keybind_items[kb_idx]["enabled"] = not cur_en
+                self._sync_keybinds_into_settings()
                 self.section_items["keybinds"] = self._build_keybinds_section_items()
                 state_str = "activado" if not cur_en else "desactivado"
-                self.status_message = f"Atajo '{self.keybind_items[kb_idx].get('desc')}' {state_str}."
+                self.status_message = f"Atajo '{self.keybind_items[kb_idx].get('title')}' {state_str}."
             return
         if act_id.startswith("kb:reset:"):
             kb_idx = int(act_id.split(":")[-1])
             if 0 <= kb_idx < len(self.keybind_items):
                 entry = self.keybind_items[kb_idx]
-                entry["keys"] = entry.get("orig_keys", entry.get("keys", ""))
-                entry["action"] = entry.get("orig_action", entry.get("action", ""))
+                entry["keys"] = entry.get("default_keys", entry.get("keys", ""))
+                entry["cmd"] = entry.get("default_cmd", entry.get("cmd", ""))
                 entry["enabled"] = True
+                self._sync_keybinds_into_settings()
                 self.section_items["keybinds"] = self._build_keybinds_section_items()
-                self.status_message = f"Atajo '{entry.get('desc')}' restaurado."
+                self.status_message = f"Atajo '{entry.get('title')}' restaurado."
             return
         if act_id.startswith("kb:delete:"):
             kb_idx = int(act_id.split(":")[-1])
             if 0 <= kb_idx < len(self.keybind_items):
                 removed = self.keybind_items.pop(kb_idx)
+                self._sync_keybinds_into_settings()
                 self.section_items["keybinds"] = self._build_keybinds_section_items()
-                self.status_message = f"Atajo '{removed.get('desc')}' eliminado."
+                self.status_message = f"Atajo '{removed.get('title')}' eliminado."
             return
 
         if act_id == "as:add":
@@ -2238,9 +2249,10 @@ class MecaTUI:
         "cursor:zoom_factor": ("cursor_zoom", float, 1.0),
         "cursor:zoom_rigid": ("cursor_zoom_rigid", bool, False),
         # Keybinds & Input
-        "input:kb_layout": ("kb_layout", str, "us"),
+        "input:kb_layout": ("kb_layout", str, "es"),
+        "input:kb_variant": ("kb_variant", str, ""),
         "input:kb_model": ("kb_model", str, "pc105"),
-        "input:kb_grp_toggle": ("kb_grp_toggle", str, "none"),
+        "input:kb_grp_toggle": ("kb_grp_toggle", str, "Alt Izq + Alt Der"),
         "input:repeat_rate": ("repeat_rate", int, 40),
         "input:repeat_delay": ("repeat_delay", int, 250),
         "input:numlock_by_default": ("numlock", bool, True),
@@ -2355,8 +2367,8 @@ class MecaTUI:
             return m if m else "pc105"
 
         if key == "input:kb_grp_toggle":
-            g = str(self.settings.get("kb_grp_toggle", "none")).strip()
-            return g if g else "none"
+            g = str(self.settings.get("kb_grp_toggle", "Alt Izq + Alt Der")).strip()
+            return g if g else "Alt Izq + Alt Der"
 
         if key == "input:compose_key":
             return "Alt Gr (Compose)" if self.settings.get("compose_key", "ralt") == "ralt" else "Bloq Mayús (Compose)"
@@ -2444,8 +2456,8 @@ class MecaTUI:
         self.modal_kb_idx = kb_idx
         self.modal_kb_field = initial_field
         self.modal_kb_keys = str(entry.get("keys", ""))
-        self.modal_kb_action = str(entry.get("action", ""))
-        self.modal_kb_desc = str(entry.get("desc", ""))
+        self.modal_kb_action = str(entry.get("cmd", ""))
+        self.modal_kb_desc = str(entry.get("title", ""))
         self.modal_selected_idx = 1
 
     def _open_theme_editor(self, theme_name: str) -> None:
@@ -2538,16 +2550,14 @@ class MecaTUI:
                     if new_k:
                         entry["keys"] = new_k
                     if new_a:
-                        entry["action"] = new_a
-                        if new_a.startswith("hl.") or new_a.startswith("o."):
-                            entry["kind"] = "lua"
-                        elif entry.get("kind") == "lua":
-                            entry["kind"] = "cmd"
+                        entry["cmd"] = new_a
+                    self._sync_keybinds_into_settings()
                     self.section_items["keybinds"] = self._build_keybinds_section_items()
-                    self.status_message = f"Atajo '{entry.get('desc')}' actualizado (Pulsa 'Aplicar')."
+                    self.status_message = f"Atajo '{entry.get('title')}' actualizado (Pulsa 'Aplicar')."
                 elif choice_idx == 2:
                     cur_en = bool(entry.get("enabled", True))
                     entry["enabled"] = not cur_en
+                    self._sync_keybinds_into_settings()
                     self.section_items["keybinds"] = self._build_keybinds_section_items()
                     self.status_message = f"Atajo {'activado' if not cur_en else 'desactivado'} (Pulsa 'Aplicar')."
                 else:
@@ -2559,19 +2569,20 @@ class MecaTUI:
                 new_a = self.modal_kb_action.strip()
                 new_d = self.modal_kb_desc.strip() or new_a
                 if new_k and new_a:
-                    kind = "lua" if (new_a.startswith("hl.") or new_a.startswith("o.")) else "cmd"
                     self.keybind_items.append({
                         "id": f"custom_{len(self.keybind_items)}",
-                        "cat": "Personalizados",
-                        "desc": new_d,
+                        "category": "ATAJOS PERSONALIZADOS",
+                        "title": new_d,
                         "keys": new_k,
-                        "orig_keys": new_k,
-                        "action": new_a,
-                        "orig_action": new_a,
-                        "kind": kind,
+                        "default_keys": new_k,
+                        "orig_lua_key": new_k,
+                        "default_lua_expr": new_a,
+                        "cmd": new_a,
+                        "default_cmd": new_a,
                         "enabled": True,
                         "is_custom": True,
                     })
+                    self._sync_keybinds_into_settings()
                     self.section_items["keybinds"] = self._build_keybinds_section_items()
                     self.status_message = f"Atajo '{new_d}' agregado (Pulsa 'Aplicar')."
                 else:
@@ -2907,13 +2918,15 @@ class MecaTUI:
                             entry = self.keybind_items[kb_idx]
                             if entry.get("is_custom"):
                                 removed = self.keybind_items.pop(kb_idx)
+                                self._sync_keybinds_into_settings()
                                 self.section_items["keybinds"] = self._build_keybinds_section_items()
-                                self.status_message = f"Atajo '{removed.get('desc')}' eliminado."
+                                self.status_message = f"Atajo '{removed.get('title')}' eliminado."
                             else:
                                 entry["enabled"] = not bool(entry.get("enabled", True))
+                                self._sync_keybinds_into_settings()
                                 self.section_items["keybinds"] = self._build_keybinds_section_items()
                                 st = "activado" if entry["enabled"] else "desactivado"
-                                self.status_message = f"Atajo '{entry.get('desc')}' {st} (Pulsa 'Aplicar')."
+                                self.status_message = f"Atajo '{entry.get('title')}' {st} (Pulsa 'Aplicar')."
             return
 
         # Atajos rápidos físicos directos (a/s/g: Aplicar/Guardar, c: Cancelar, r: Restablecer)
@@ -3741,6 +3754,7 @@ class MecaTUI:
             self.section_items = self._init_section_items()
 
         if ok_gui and ok_auto and ok_kb:
+            self._sync_keybinds_into_settings()
             self.saved_settings = dict(self.settings)
             self.saved_autostart = [dict(x) for x in self.autostart_items]
             self.saved_keybinds = [dict(x) for x in self.keybind_items]
@@ -3787,9 +3801,10 @@ class MecaTUI:
 
         defaults = self.config_sync.get_default_settings()
         self.settings.update(defaults)
-        self.keybind_items = [dict(x) for x in self.config_sync.DEFAULT_SYSTEM_KEYBINDS]
+        self.keybind_items = self.config_sync.get_default_keybinds()
         self._sync_theme_into_settings()
         self._sync_autostart_into_settings()
+        self._sync_keybinds_into_settings()
         self.config_sync.save_gui_settings(self.settings, apply_live=True)
         self.config_sync.save_keybinds(self.keybind_items)
         self.saved_settings = dict(self.settings)
