@@ -64,8 +64,9 @@ class MecaTUI:
         ("DISPLAY", "workspaces", "󰕰", "Workspaces", "Escritorios persistentes y modo de distribución"),
         ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Opciones de mosaico Dwindle, Master y Scrolling"),
         ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Reglas de ventanas flotantes y opacidad"),
-        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Agregar aplicaciones, servicios o comandos al inicio"),
-        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Temas, edicion de paleta, servicios y ajustes de Omarchy"),
+        ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Buscador y selector de aplicaciones, servicios o comandos al inicio"),
+        ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Crear nuevos temas Omarchy y gestionar los ya creados"),
+        ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondos, barra superior, luz nocturna y ajustes de Omarchy"),
     ]
 
     def __init__(self):
@@ -85,6 +86,7 @@ class MecaTUI:
         self.monitors = HyprIPC.get_monitors()
         self.available_themes = self.theme_engine.list_available_themes()
         self.autostart_items = self.config_sync.load_autostart_items()
+        self.installed_apps = self.config_sync.list_installed_applications()
 
         # Sincronizar propiedades del tema Omarchy activo dentro de settings para edición
         self._sync_theme_into_settings()
@@ -100,7 +102,7 @@ class MecaTUI:
         self._was_tiled = False
 
         # Estado de ventana modal:
-        # None | "confirm_section_change" | "confirm_reset" | "input_autostart" | "input_theme_hex"
+        # None | "confirm_section_change" | "confirm_reset" | "input_autostart" | "input_theme_hex" | "create_theme"
         self.modal_state: Optional[str] = None
         self.modal_selected_idx: int = 0
         self.pending_section_idx: Optional[int] = None
@@ -108,11 +110,21 @@ class MecaTUI:
         self._modal_button_click_map: Dict[int, Tuple[int, int]] = {}
         self._modal_button_row_range: Tuple[int, int] = (0, 0)
 
-        # Estado de entrada de texto para modales interactivos (Autostart y Hex de Tema)
+        # Estado de entrada de texto y selectores para modales interactivos
         self.modal_input_text: str = ""
         self.modal_input_kind: str = "launch"  # "launch" (App/Servicio) | "exec" (Comando)
         self.modal_hex_target: str = "accent"  # "accent" | "background" | "foreground" | "selection"
+        self.modal_base_theme: str = self.theme_engine.current_theme
+        self.modal_theme_mode: str = "dark"
         self._modal_kind_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
+        self._modal_mode_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
+
+        # Estado del buscador y selector de aplicaciones en Autostart
+        self.autostart_app_idx: int = 0
+        self.autostart_app_scroll: int = 0
+        self.hover_autostart_app_idx: Optional[int] = None
+        self._autostart_list_click_map: Dict[int, int] = {}
+        self._autostart_list_x_range: Tuple[int, int] = (0, 0)
 
         # Mapeos de coordenadas para interacción con el ratón y estado hover (pasar el cursor)
         self._sidebar_click_map: Dict[int, int] = {}
@@ -149,8 +161,8 @@ class MecaTUI:
         items = [
             SectionItem(
                 "action:add_autostart",
-                "Agregar aplicacion, servicio o comando",
-                "Abre una ventana para registrar un nuevo proceso en ~/.config/hypr/autostart.lua",
+                "Buscar y agregar aplicacion, servicio o comando",
+                "Abre el buscador de aplicaciones instaladas o permite escribir un comando",
                 "action",
             ),
         ]
@@ -168,23 +180,66 @@ class MecaTUI:
             )
         return items
 
-    def _init_section_items(self) -> Dict[str, List[SectionItem]]:
-        themes = self.available_themes if self.available_themes else ["rose-pine", "lizarbe", "white", "catppuccin"]
+    def _build_themes_section_items(self) -> List[SectionItem]:
+        """Construye dinámicamente los controles de la sección Temas Omarchy (crear y gestionar temas)."""
+        self.available_themes = self.theme_engine.list_available_themes()
+        themes = self.available_themes if self.available_themes else ["tokyo-night", "lizarbe", "catppuccin", "rose-pine"]
+
         cur_accent = self.settings.get("omarchy_theme_accent", "#E31B23")
-        accent_opts = [cur_accent, "#E31B23", "#89b4fa", "#1e66f5", "#2DB872", "#E5A83B", "#f38ba8", "#94e2d5", "#6e6e6e"]
-        accent_opts = list(dict.fromkeys(accent_opts))
+        accent_opts = list(dict.fromkeys([cur_accent, "#7aa2f7", "#E31B23", "#89b4fa", "#1e66f5", "#2DB872", "#E5A83B", "#f38ba8", "#94e2d5"]))
 
         cur_bg = self.settings.get("omarchy_theme_bg", "#08080B")
-        bg_opts = list(dict.fromkeys([cur_bg, "#08080B", "#1e1e2e", "#161622", "#101019", "#ffffff", "#eff1f5"]))
+        bg_opts = list(dict.fromkeys([cur_bg, "#1a1b26", "#08080B", "#1e1e2e", "#161622", "#101019", "#ffffff", "#eff1f5"]))
 
         cur_fg = self.settings.get("omarchy_theme_fg", "#d8d8d8")
-        fg_opts = list(dict.fromkeys([cur_fg, "#d8d8d8", "#cdd6f4", "#ffffff", "#000000", "#1a1a1a"]))
+        fg_opts = list(dict.fromkeys([cur_fg, "#a9b1d6", "#d8d8d8", "#cdd6f4", "#ffffff", "#000000", "#1a1a1a"]))
 
         cur_sel = self.settings.get("omarchy_theme_sel", "#45475a")
-        sel_opts = list(dict.fromkeys([cur_sel, "#45475a", "#E31B23", "#c0c0c0", "#ccd0da", "#313244"]))
+        sel_opts = list(dict.fromkeys([cur_sel, "#292e42", "#45475a", "#E31B23", "#c0c0c0", "#ccd0da", "#313244"]))
 
         cur_icons = self.settings.get("omarchy_icons", "Adwaita")
         icon_opts = list(dict.fromkeys([cur_icons, "Yaru-blue", "Yaru-red", "Papirus-Dark", "Adwaita", "Lizarbe-Red"]))
+
+        items = [
+            SectionItem(
+                "action:create_theme",
+                "Crear nuevo tema Omarchy",
+                "Crea y registra un nuevo tema clonando estructura y fondos de una plantilla",
+                "action",
+            ),
+            SectionItem(
+                "action:clone_theme",
+                "Duplicar tema actual como nuevo",
+                f"Clona '{self.theme_engine.current_theme}' con otro nombre para personalizarlo",
+                "action",
+            ),
+            SectionItem("omarchy:theme", "Tema activo / Seleccionar tema", "Activa y carga cualquier tema creado o del sistema", "select", options=themes),
+            SectionItem("omarchy:theme_mode", "Modo del tema (dark / light)", "Edita el modo en el tema actual y en el original", "select", options=["dark", "light"]),
+            SectionItem("omarchy:theme_accent", "Color de acento (Accent)", "Edita el color de acento en el tema actual y original", "select", options=accent_opts),
+            SectionItem("omarchy:theme_bg", "Color de fondo (Background)", "Edita el color de fondo en el tema actual y original", "select", options=bg_opts),
+            SectionItem("omarchy:theme_fg", "Color de texto (Foreground)", "Edita el color de texto en el tema actual y original", "select", options=fg_opts),
+            SectionItem("omarchy:theme_sel", "Color de seleccion (Selection)", "Edita el color de seleccion en el tema actual y original", "select", options=sel_opts),
+            SectionItem("omarchy:icons", "Paquete de iconos (icons.theme)", "Edita el paquete de iconos del tema", "select", options=icon_opts),
+            SectionItem("action:custom_theme_hex", "Escribir color Hex personalizado", "Ingresa un codigo #RRGGBB exacto para editar el tema", "action"),
+        ]
+
+        user_themes = self.theme_engine.list_user_themes()
+        for u_name in user_themes:
+            is_act = (self.theme_engine.normalize_theme_slug(u_name) == self.theme_engine.normalize_theme_slug(self.theme_engine.current_theme))
+            state_badge = " [ACTIVO]" if is_act else ""
+            items.append(
+                SectionItem(
+                    f"user_theme:item:{u_name}",
+                    f"Tema guardado: {u_name}{state_badge}",
+                    "Clic/Enter: Activar este tema │ Supr/Del: Eliminar de ~/.config/omarchy/themes",
+                    "action",
+                )
+            )
+
+        return items
+
+    def _init_section_items(self) -> Dict[str, List[SectionItem]]:
+        themes = self.available_themes if self.available_themes else ["tokyo-night", "rose-pine", "lizarbe", "white", "catppuccin"]
 
         return {
             "general": [
@@ -254,15 +309,9 @@ class MecaTUI:
                 SectionItem("rules:calculator_float", "Float Calculator", "Abre la calculadora en modo flotante centrado", "toggle"),
             ],
             "autostart": self._build_autostart_section_items(),
+            "themes": self._build_themes_section_items(),
             "omarchy": [
-                SectionItem("omarchy:theme", "Active Omarchy Theme", "Selecciona y aplica el tema global de Omarchy", "select", options=themes),
-                SectionItem("omarchy:theme_mode", "Theme mode (dark/light)", "Edita el modo en el tema actual y en el tema original", "select", options=["dark", "light"]),
-                SectionItem("omarchy:theme_accent", "Theme accent color", "Edita el color de acento en el tema actual y original", "select", options=accent_opts),
-                SectionItem("omarchy:theme_bg", "Theme background color", "Edita el color de fondo en el tema actual y original", "select", options=bg_opts),
-                SectionItem("omarchy:theme_fg", "Theme foreground color", "Edita el color de texto en el tema actual y original", "select", options=fg_opts),
-                SectionItem("omarchy:theme_sel", "Theme selection color", "Edita el color de seleccion en el tema actual y original", "select", options=sel_opts),
-                SectionItem("omarchy:icons", "Icon Theme", "Edita el paquete de iconos en icons.theme del tema", "select", options=icon_opts),
-                SectionItem("action:custom_theme_hex", "Escribir color Hex personalizado", "Ingresa un codigo #RRGGBB exacto para editar el tema", "action"),
+                SectionItem("omarchy:theme", "Active Omarchy Theme", "Selecciona y aplica rápidamente el tema global de Omarchy", "select", options=themes),
                 SectionItem("action:next_wallpaper", "Cambiar fondo de pantalla", "Alterna al siguiente wallpaper del tema Omarchy activo", "action"),
                 SectionItem("action:toggle_bar", "Alternar barra superior Omarchy", "Muestra u oculta la barra superior de Omarchy", "action"),
                 SectionItem("action:toggle_nightlight", "Alternar luz nocturna", "Activa o desactiva el filtro cálido hyprsunset", "action"),
@@ -272,13 +321,13 @@ class MecaTUI:
         }
 
     def run(self) -> None:
-        """Ciclo principal TUI en modo crudo y ventana flotante centrada."""
+        """Ciclo principal TUI en modo crudo y ventana flotante rectangular vertical centrada."""
         if not sys.stdin.isatty():
             print("Error: meca debe ejecutarse en una terminal TTY.")
             return
 
-        # Convertir la ventana de terminal activa en flotante y centrada
-        self._was_tiled = HyprIPC.ensure_floating_centered(width=960, height=680)
+        # Convertir la ventana de terminal activa en flotante rectangular vertical y centrada
+        self._was_tiled = HyprIPC.ensure_floating_centered(width=760, height=920)
 
         fd = sys.stdin.fileno()
         self.orig_termios = termios.tcgetattr(fd)
@@ -353,22 +402,16 @@ class MecaTUI:
 
     def _render_sidebar(self, width: int, max_rows: int) -> List[str]:
         """
-        Renderiza el panel izquierdo con mayor margen vertical entre categorías y secciones.
+        Renderiza el panel izquierdo sin márgenes verticales entre las opciones de cada categoría.
         Registra las filas exactas en self._sidebar_click_map para precisión de clic 1:1.
         """
         lines: List[str] = []
         current_cat = None
         self._sidebar_click_map.clear()
 
-        # Si la terminal tiene suficiente altura, damos aún más respiro entre ítems
-        extra_item_gap = max_rows >= 36
-
         for idx, (cat, sec_id, icon, title, desc) in enumerate(self.SECTIONS):
             if cat != current_cat:
-                # Margen vertical antes de cada bloque de categoría
                 if current_cat is not None and len(lines) < max_rows:
-                    lines.append(" " * width)
-                elif current_cat is None and max_rows >= 24 and len(lines) < max_rows:
                     lines.append(" " * width)
 
                 current_cat = cat
@@ -389,18 +432,15 @@ class MecaTUI:
             item_text = f"{prefix}{icon}  {title}".ljust(width)[:width]
 
             if is_sel and (is_active_pane or is_hover):
-                line = self.theme_engine.style("bright_foreground", "selection", item_text, bold=True)
+                line = self.theme_engine.style("bright_foreground", "soft_selection", item_text, bold=True)
             elif is_sel:
-                line = self.theme_engine.style("bright_foreground", "muted", item_text, bold=True)
+                line = self.theme_engine.style("bright_foreground", "soft_muted", item_text, bold=True)
             elif is_hover:
-                line = self.theme_engine.style("bright_foreground", "muted", item_text, bold=True)
+                line = self.theme_engine.style("bright_foreground", "soft_muted", item_text, bold=True)
             else:
                 line = self.theme_engine.style("foreground", None, item_text)
 
             lines.append(line)
-
-            if extra_item_gap and len(lines) < max_rows:
-                lines.append(" " * width)
 
         while len(lines) < max_rows:
             lines.append(" " * width)
@@ -422,6 +462,8 @@ class MecaTUI:
 
         if sec_id == "autostart":
             self.section_items["autostart"] = self._build_autostart_section_items()
+        elif sec_id == "themes":
+            self.section_items["themes"] = self._build_themes_section_items()
 
         items = self.section_items.get(sec_id, [])
         is_active_pane = (self.active_pane == "content" and not self.modal_state)
@@ -471,7 +513,7 @@ class MecaTUI:
             if is_sel:
                 l1_raw = f" ▌ {item.name}"[:left_max_w].ljust(left_max_w)
                 l2_raw = f" ▌ └─ {item.desc}"[:left_max_w].ljust(left_max_w)
-                l1_styled = self.theme_engine.style("bright_foreground", "selection", l1_raw, bold=True)
+                l1_styled = self.theme_engine.style("bright_foreground", "soft_selection", l1_raw, bold=True)
                 l2_styled = self.theme_engine.fg("foreground", l2_raw)
             else:
                 l1_raw = f"   {item.name}"[:left_max_w].ljust(left_max_w)
@@ -502,7 +544,7 @@ class MecaTUI:
 
     def _render_3d_buttons(self, width: int, btn_top_screen_y: int, content_start_x: int) -> List[str]:
         """
-        Dibuja los 3 botones inferiores compactos de 3 líneas con bisel 3D Unicode:
+        Dibuja los 3 botones inferiores compactos de 3 líneas con bisel 3D Unicode y destello suave:
           ┌─────────────┐  ┌──────────┐  ┌───────────┐
           ┃ Restablecer │  ┃ Cancelar │  ┃  Aplicar  │
           ┗━━━━━━━━━━━━━┙  ┗━━━━━━━━━━┙  ┗━━━━━━━━━━━┙
@@ -546,9 +588,9 @@ class MecaTUI:
             left_edge = self.theme_engine.style(bevel_col, None, "┃", bold=True)
             right_edge = self.theme_engine.style(border_col, None, "│", bold=(is_sel or is_primary))
             if is_hover_btn:
-                inner_styled = self.theme_engine.style("bright_foreground", "accent", label, bold=True)
+                inner_styled = self.theme_engine.style("bright_foreground", "soft_hover", label, bold=True)
             elif is_sel:
-                inner_styled = self.theme_engine.style("bright_foreground", "selection", label, bold=True)
+                inner_styled = self.theme_engine.style("bright_foreground", "soft_selection", label, bold=True)
             elif is_primary:
                 inner_styled = self.theme_engine.style("bright_foreground", None, label, bold=True)
             else:
@@ -577,7 +619,7 @@ class MecaTUI:
     ) -> Tuple[str, str, str, int]:
         """
         Dibuja los controles del panel derecho usando cuadrados cerrados reales
-        de 3 líneas (┌───┐ / ┃ - │ / ┗━━━┙) en lugar de corchetes [ ], con respuesta al hover.
+        de 3 líneas (┌───┐ / ┃ - │ / ┗━━━┙) con destello suave (soft_hover / soft_selection).
         """
         val = self._get_item_value(item)
         b_col = "bright_foreground" if is_sel else "foreground"
@@ -593,8 +635,8 @@ class MecaTUI:
             bot_m = self.theme_engine.style("accent" if m_hov else sh_col, None, "┗━━━┙", bold=True)
             bot_p = self.theme_engine.style("accent" if p_hov else sh_col, None, "┗━━━┙", bold=True)
 
-            m_bg = "accent" if m_hov else ("selection" if is_sel else None)
-            p_bg = "accent" if p_hov else ("selection" if is_sel else None)
+            m_bg = "soft_hover" if m_hov else ("soft_selection" if is_sel else None)
+            p_bg = "soft_hover" if p_hov else ("soft_selection" if is_sel else None)
 
             m_mid = (
                 self.theme_engine.fg("accent" if m_hov else sh_col, "┃")
@@ -619,7 +661,7 @@ class MecaTUI:
             box_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌───┐", bold=c_hov) + "    "
             mark = " ■ " if is_on else "   "
             state_lbl = " ON " if is_on else " off"
-            mark_bg = "accent" if c_hov else ("selection" if (is_sel or is_on) else None)
+            mark_bg = "soft_hover" if c_hov else ("soft_selection" if (is_sel or is_on) else None)
             mark_styled = self.theme_engine.style(
                 "bright_foreground" if (is_on or c_hov) else "muted",
                 mark_bg,
@@ -641,18 +683,18 @@ class MecaTUI:
             inner_w = len(raw_lbl)
             c_hov = (hover_sub == "control")
             c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
-            inner_bg = "accent" if c_hov else ("selection" if is_sel else None)
+            inner_bg = "soft_hover" if c_hov else ("soft_selection" if is_sel else None)
             inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=(is_sel or c_hov))
             c_mid = self.theme_engine.fg("accent" if c_hov else sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
             c_bot = self.theme_engine.fg("accent" if c_hov else sh_col, "┗" + ("━" * inner_w) + "┙")
             return c_top, c_mid, c_bot, inner_w + 2
 
         elif item.item_type == "action":
-            raw_lbl = " Ejecutar "
+            raw_lbl = " Activar " if item.key.startswith("user_theme:item:") else " Ejecutar "
             inner_w = len(raw_lbl)
             c_hov = (hover_sub == "control")
             c_top = self.theme_engine.style("accent" if c_hov else b_col, None, "┌" + ("─" * inner_w) + "┐", bold=c_hov)
-            inner_bg = "accent" if c_hov else ("selection" if is_sel else None)
+            inner_bg = "soft_hover" if c_hov else ("soft_selection" if is_sel else None)
             inner_s = self.theme_engine.style("bright_foreground", inner_bg, raw_lbl, bold=True)
             c_mid = self.theme_engine.fg("accent" if c_hov else sh_col, "┃") + inner_s + self.theme_engine.fg(b_col, "│")
             c_bot = self.theme_engine.fg("accent" if c_hov else sh_col, "┗" + ("━" * inner_w) + "┙")
@@ -674,18 +716,35 @@ class MecaTUI:
         raw = str(val)
         return " " * len(raw), raw, " " * len(raw), len(raw)
 
+    def _get_filtered_autostart_apps(self) -> List[Dict[str, str]]:
+        """Filtra la lista de aplicaciones instaladas según el texto buscado en el modal de Autostart."""
+        q = self.modal_input_text.strip().lower()
+        if not q:
+            return self.installed_apps
+        return [
+            app for app in self.installed_apps
+            if q in app["name"].lower() or q in app["cmd"].lower()
+        ]
+
     def _render_modal_overlay(self, cols: int, rows: int) -> List[str]:
         """
         Renderiza ventanas modales centradas para:
         - "confirm_section_change": aplicar/descartar cambios al cambiar de sección
         - "confirm_reset": confirmar restablecimiento a valores predeterminados
-        - "input_autostart": agregar aplicación, servicio o comando en autostart.lua
+        - "input_autostart": buscador y selector de aplicaciones, servicios o comandos para autostart.lua
         - "input_theme_hex": ingresar color hexadecimal personalizado para el tema Omarchy
+        - "create_theme": crear y agregar un nuevo tema Omarchy
         """
         self._modal_button_click_map.clear()
         self._modal_kind_click_range = (0, 0, 0)
+        self._modal_mode_click_range = (0, 0, 0)
+        self._autostart_list_click_map.clear()
 
-        if self.modal_state in ("input_autostart", "input_theme_hex"):
+        if self.modal_state == "input_autostart":
+            return self._render_autostart_modal(cols, rows)
+        if self.modal_state == "create_theme":
+            return self._render_create_theme_modal(cols, rows)
+        if self.modal_state == "input_theme_hex":
             return self._render_input_modal(cols, rows)
 
         if self.modal_state == "confirm_section_change":
@@ -744,16 +803,18 @@ class MecaTUI:
         cur_x = start_x + 1 + pad_left
         for b_idx, b_lbl in modal_btns:
             bw = len(b_lbl) + 2
-            is_b_sel = (self.modal_selected_idx == b_idx)
+            is_b_hov = (self.hover_modal_btn_idx == b_idx)
+            is_b_sel = (self.modal_selected_idx == b_idx) or is_b_hov
             self._modal_button_click_map[b_idx] = (cur_x, cur_x + bw - 1)
 
             b_col = "bright_foreground" if is_b_sel else "foreground"
             sh_col = "accent" if is_b_sel else "muted"
+            btn_bg = "soft_hover" if is_b_hov else ("soft_selection" if is_b_sel else "background")
 
             r0_s = self.theme_engine.style(b_col, "background", "┌" + ("─" * len(b_lbl)) + "┐", bold=is_b_sel)
             r1_s = (
                 self.theme_engine.style(sh_col, "background", "┃", bold=True)
-                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", "selection" if is_b_sel else "background", b_lbl, bold=is_b_sel)
+                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", btn_bg, b_lbl, bold=is_b_sel)
                 + self.theme_engine.style(b_col, "background", "│", bold=is_b_sel)
             )
             r2_s = self.theme_engine.style(sh_col, "background", "┗" + ("━" * len(b_lbl)) + "┙", bold=True)
@@ -775,25 +836,231 @@ class MecaTUI:
 
         return overlay
 
+    def _render_autostart_modal(self, cols: int, rows: int) -> List[str]:
+        """
+        Renderiza el modal con buscador en tiempo real y selector interactivo de aplicaciones
+        instaladas para agregarlas a ~/.config/hypr/autostart.lua.
+        """
+        title = " BUSCADOR Y SELECTOR DE APLICACIONES (AUTOSTART) "
+        kind_val = (
+            "Aplicacion / Servicio (o.launch_on_start)"
+            if self.modal_input_kind == "launch"
+            else "Comando / Script      (o.exec_on_start)  "
+        )
+
+        mw = min(68, cols - 4)
+        inner_mw = mw - 2
+        list_rows = 6
+        mh = 13 + list_rows  # 19 filas en total
+        start_x = max(2, (cols - mw) // 2)
+        start_y = max(2, (rows - mh) // 2)
+
+        overlay: List[str] = []
+        top_line = "┌" + ("─" * inner_mw) + "┐"
+        title_centered = title.center(inner_mw)[:inner_mw]
+        sep_line = "├" + ("─" * inner_mw) + "┤"
+        bot_line = "┗" + ("━" * inner_mw) + "┙"
+
+        selector_line = f"  Tipo (Tab/Clic): {kind_val} ▾".ljust(inner_mw)[:inner_mw]
+        self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
+
+        box_w = inner_mw - 6
+        shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
+        input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+        input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
+        input_bot = ("  ┗" + ("━" * box_w) + "┙  ").ljust(inner_mw)[:inner_mw]
+
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
+        overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + "  Buscar aplicacion o escribir comando personalizado:".ljust(inner_mw)[:inner_mw] + "│"))
+        overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
+        overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
+        overlay.append(f"\033[{start_y + 7};{start_x}H" + self.theme_engine.style("accent", "background", "┃" + input_bot + "│"))
+
+        filtered = self._get_filtered_autostart_apps()
+        if self.autostart_app_idx >= len(filtered):
+            self.autostart_app_idx = max(0, len(filtered) - 1)
+        if self.autostart_app_idx < self.autostart_app_scroll:
+            self.autostart_app_scroll = self.autostart_app_idx
+        elif self.autostart_app_idx >= self.autostart_app_scroll + list_rows:
+            self.autostart_app_scroll = self.autostart_app_idx - list_rows + 1
+        self.autostart_app_scroll = max(0, min(self.autostart_app_scroll, max(0, len(filtered) - list_rows)))
+
+        count_lbl = f"  Selector de aplicaciones ({len(filtered)} coincidencias — ↑/↓, Rueda o Clic):"
+        overlay.append(f"\033[{start_y + 8};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + count_lbl.ljust(inner_mw)[:inner_mw] + "│"))
+
+        self._autostart_list_x_range = (start_x + 2, start_x + inner_mw - 2)
+        for r_off in range(list_rows):
+            row_y = start_y + 9 + r_off
+            f_idx = self.autostart_app_scroll + r_off
+            if f_idx < len(filtered):
+                app = filtered[f_idx]
+                self._autostart_list_click_map[row_y] = f_idx
+                is_app_sel = (f_idx == self.autostart_app_idx)
+                is_app_hov = (f_idx == self.hover_autostart_app_idx)
+                marker = " ▸ " if (is_app_sel or is_app_hov) else "   "
+                name_w = max(16, inner_mw - 28)
+                cmd_w = max(10, inner_mw - name_w - 5)
+                app_name = app["name"][:name_w].ljust(name_w)
+                app_cmd = app["cmd"][:cmd_w].rjust(cmd_w)
+                row_txt = f"{marker}{app_name} {app_cmd} "[:inner_mw].ljust(inner_mw)
+                row_bg = "soft_hover" if is_app_hov else ("soft_selection" if is_app_sel else "background")
+                row_fg = "bright_foreground" if (is_app_sel or is_app_hov) else "foreground"
+                overlay.append(
+                    f"\033[{row_y};{start_x}H"
+                    + self.theme_engine.style("foreground", "background", "┃")
+                    + self.theme_engine.style(row_fg, row_bg, row_txt, bold=(is_app_sel or is_app_hov))
+                    + self.theme_engine.style("foreground", "background", "│")
+                )
+            elif r_off == 0 and not filtered:
+                custom_msg = f"   Comando personalizado: '{self.modal_input_text.strip()}'".ljust(inner_mw)[:inner_mw]
+                overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + custom_msg + "│"))
+            else:
+                overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + (" " * inner_mw) + "│"))
+
+        modal_btns = [
+            (0, " Cancelar "),
+            (1, " Agregar "),
+        ]
+        gap = 3
+        btns_total_w = sum(len(lbl) + 2 for _, lbl in modal_btns) + gap
+        pad_left = max(1, (inner_mw - btns_total_w) // 2)
+        pad_right = max(0, inner_mw - btns_total_w - pad_left)
+
+        btn_y_top = start_y + 9 + list_rows
+        self._modal_button_row_range = (btn_y_top, btn_y_top + 2)
+
+        b_r0 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+        b_r1 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+        b_r2 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+
+        cur_x = start_x + 1 + pad_left
+        for b_idx, b_lbl in modal_btns:
+            bw = len(b_lbl) + 2
+            is_b_hov = (self.hover_modal_btn_idx == b_idx)
+            is_b_sel = (self.modal_selected_idx == b_idx) or is_b_hov
+            self._modal_button_click_map[b_idx] = (cur_x, cur_x + bw - 1)
+            b_col = "bright_foreground" if is_b_sel else "foreground"
+            sh_col = "accent" if is_b_sel else "muted"
+            btn_bg = "soft_hover" if is_b_hov else ("soft_selection" if is_b_sel else "background")
+
+            r0_s = self.theme_engine.style(b_col, "background", "┌" + ("─" * len(b_lbl)) + "┐", bold=is_b_sel)
+            r1_s = (
+                self.theme_engine.style(sh_col, "background", "┃", bold=True)
+                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", btn_bg, b_lbl, bold=is_b_sel)
+                + self.theme_engine.style(b_col, "background", "│", bold=is_b_sel)
+            )
+            r2_s = self.theme_engine.style(sh_col, "background", "┗" + ("━" * len(b_lbl)) + "┙", bold=True)
+
+            sep_gap = self.theme_engine.style("foreground", "background", " " * gap) if b_idx == 0 else ""
+            b_r0.append(r0_s + sep_gap)
+            b_r1.append(r1_s + sep_gap)
+            b_r2.append(r2_s + sep_gap)
+            cur_x += bw + gap
+
+        b_r0.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+        b_r1.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+        b_r2.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+
+        overlay.append(f"\033[{btn_y_top};{start_x}H" + "".join(b_r0))
+        overlay.append(f"\033[{btn_y_top + 1};{start_x}H" + "".join(b_r1))
+        overlay.append(f"\033[{btn_y_top + 2};{start_x}H" + "".join(b_r2))
+        overlay.append(f"\033[{btn_y_top + 3};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
+        return overlay
+
+    def _render_create_theme_modal(self, cols: int, rows: int) -> List[str]:
+        """Renderiza la ventana modal para crear y registrar un nuevo tema Omarchy."""
+        title = " CREAR NUEVO TEMA OMARCHY "
+        mw = min(64, cols - 4)
+        inner_mw = mw - 2
+        mh = 13
+        start_x = max(2, (cols - mw) // 2)
+        start_y = max(2, (rows - mh) // 2)
+
+        overlay: List[str] = []
+        top_line = "┌" + ("─" * inner_mw) + "┐"
+        title_centered = title.center(inner_mw)[:inner_mw]
+        sep_line = "├" + ("─" * inner_mw) + "┤"
+        bot_line = "┗" + ("━" * inner_mw) + "┙"
+
+        base_line = f"  Plantilla base (↑/↓ o clic): {self.modal_base_theme} ▾".ljust(inner_mw)[:inner_mw]
+        mode_line = f"  Modo inicial (Clic):         {self.modal_theme_mode} ▾".ljust(inner_mw)[:inner_mw]
+        self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
+        self._modal_mode_click_range = (start_y + 4, start_x + 2, start_x + inner_mw - 2)
+
+        box_w = inner_mw - 6
+        shown_txt = (self.modal_input_text + "█")[-box_w:].ljust(box_w)
+        input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+        input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
+        input_bot = ("  ┗" + ("━" * box_w) + "┙  ").ljust(inner_mw)[:inner_mw]
+
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + base_line + "│", bold=True))
+        overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_muted", "┃" + mode_line + "│", bold=True))
+        overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + "  Nombre del nuevo tema (ej. cyber-night):".ljust(inner_mw)[:inner_mw] + "│"))
+        overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
+        overlay.append(f"\033[{start_y + 7};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
+        overlay.append(f"\033[{start_y + 8};{start_x}H" + self.theme_engine.style("accent", "background", "┃" + input_bot + "│"))
+
+        modal_btns = [
+            (0, " Cancelar "),
+            (1, " Crear Tema "),
+        ]
+        gap = 3
+        btns_total_w = sum(len(lbl) + 2 for _, lbl in modal_btns) + gap
+        pad_left = max(1, (inner_mw - btns_total_w) // 2)
+        pad_right = max(0, inner_mw - btns_total_w - pad_left)
+
+        btn_y_top = start_y + 9
+        self._modal_button_row_range = (btn_y_top, btn_y_top + 2)
+
+        b_r0 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+        b_r1 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+        b_r2 = [self.theme_engine.style("foreground", "background", "┃" + (" " * pad_left))]
+
+        cur_x = start_x + 1 + pad_left
+        for b_idx, b_lbl in modal_btns:
+            bw = len(b_lbl) + 2
+            is_b_hov = (self.hover_modal_btn_idx == b_idx)
+            is_b_sel = (self.modal_selected_idx == b_idx) or is_b_hov
+            self._modal_button_click_map[b_idx] = (cur_x, cur_x + bw - 1)
+            b_col = "bright_foreground" if is_b_sel else "foreground"
+            sh_col = "accent" if is_b_sel else "muted"
+            btn_bg = "soft_hover" if is_b_hov else ("soft_selection" if is_b_sel else "background")
+
+            r0_s = self.theme_engine.style(b_col, "background", "┌" + ("─" * len(b_lbl)) + "┐", bold=is_b_sel)
+            r1_s = (
+                self.theme_engine.style(sh_col, "background", "┃", bold=True)
+                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", btn_bg, b_lbl, bold=is_b_sel)
+                + self.theme_engine.style(b_col, "background", "│", bold=is_b_sel)
+            )
+            r2_s = self.theme_engine.style(sh_col, "background", "┗" + ("━" * len(b_lbl)) + "┙", bold=True)
+
+            sep_gap = self.theme_engine.style("foreground", "background", " " * gap) if b_idx == 0 else ""
+            b_r0.append(r0_s + sep_gap)
+            b_r1.append(r1_s + sep_gap)
+            b_r2.append(r2_s + sep_gap)
+            cur_x += bw + gap
+
+        b_r0.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+        b_r1.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+        b_r2.append(self.theme_engine.style("foreground", "background", (" " * pad_right) + "│"))
+
+        overlay.append(f"\033[{btn_y_top};{start_x}H" + "".join(b_r0))
+        overlay.append(f"\033[{btn_y_top + 1};{start_x}H" + "".join(b_r1))
+        overlay.append(f"\033[{btn_y_top + 2};{start_x}H" + "".join(b_r2))
+        overlay.append(f"\033[{start_y + 12};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
+        return overlay
+
     def _render_input_modal(self, cols: int, rows: int) -> List[str]:
-        """Renderiza la ventana modal interactiva para entrada de texto (Autostart o Color Hex)."""
-        is_autostart = (self.modal_state == "input_autostart")
-        if is_autostart:
-            title = " AGREGAR A AUTOSTART "
-            kind_txt = (
-                "Tipo (↑/↓ o clic):  ┌─────────────────────────────────────────┐"
-            )
-            kind_val = (
-                "Aplicacion / Servicio (o.launch_on_start)"
-                if self.modal_input_kind == "launch"
-                else "Comando / Script      (o.exec_on_start)  "
-            )
-            prompt_lbl = "Escribe el comando, servicio o aplicacion:"
-        else:
-            title = " EDITAR COLOR HEX DEL TEMA OMARCHY "
-            kind_txt = "Propiedad (↑/↓ o clic):"
-            kind_val = f"Color a editar: {self.modal_hex_target} ▾"
-            prompt_lbl = "Escribe el codigo hexadecimal (ej. #E31B23):"
+        """Renderiza la ventana modal interactiva para entrada de Color Hex."""
+        title = " EDITAR COLOR HEX DEL TEMA OMARCHY "
+        kind_val = f"Color a editar: {self.modal_hex_target} ▾"
+        prompt_lbl = "Escribe el codigo hexadecimal (ej. #E31B23):"
 
         mw = min(64, cols - 4)
         inner_mw = mw - 2
@@ -807,8 +1074,8 @@ class MecaTUI:
         sep_line = "├" + ("─" * inner_mw) + "┤"
         bot_line = "┗" + ("━" * inner_mw) + "┙"
 
-        # Selector de tipo clicable en fila start_y + 3
-        selector_line = f"  Tipo (↑/↓ o clic): {kind_val} ▾".ljust(inner_mw)[:inner_mw]
+        # Selector de propiedad clicable en fila start_y + 3
+        selector_line = f"  Propiedad (↑/↓ o clic): {kind_val}".ljust(inner_mw)[:inner_mw]
         self._modal_kind_click_range = (start_y + 3, start_x + 2, start_x + inner_mw - 2)
 
         # Campo de texto con cursor█
@@ -821,7 +1088,7 @@ class MecaTUI:
         overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
         overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
         overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
-        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "selection", "┃" + selector_line + "│", bold=True))
+        overlay.append(f"\033[{start_y + 3};{start_x}H" + self.theme_engine.style("bright_foreground", "soft_selection", "┃" + selector_line + "│", bold=True))
         overlay.append(f"\033[{start_y + 4};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + f"  {prompt_lbl}".ljust(inner_mw)[:inner_mw] + "│"))
         overlay.append(f"\033[{start_y + 5};{start_x}H" + self.theme_engine.style("foreground", "background", "┃" + input_top + "│"))
         overlay.append(f"\033[{start_y + 6};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + input_mid + "│", bold=True))
@@ -829,7 +1096,7 @@ class MecaTUI:
 
         modal_btns = [
             (0, " Cancelar "),
-            (1, " Agregar " if is_autostart else " Aplicar "),
+            (1, " Aplicar "),
         ]
         gap = 3
         btns_total_w = sum(len(lbl) + 2 for _, lbl in modal_btns) + gap
@@ -846,15 +1113,17 @@ class MecaTUI:
         cur_x = start_x + 1 + pad_left
         for b_idx, b_lbl in modal_btns:
             bw = len(b_lbl) + 2
-            is_b_sel = (self.modal_selected_idx == b_idx)
+            is_b_hov = (self.hover_modal_btn_idx == b_idx)
+            is_b_sel = (self.modal_selected_idx == b_idx) or is_b_hov
             self._modal_button_click_map[b_idx] = (cur_x, cur_x + bw - 1)
             b_col = "bright_foreground" if is_b_sel else "foreground"
             sh_col = "accent" if is_b_sel else "muted"
+            btn_bg = "soft_hover" if is_b_hov else ("soft_selection" if is_b_sel else "background")
 
             r0_s = self.theme_engine.style(b_col, "background", "┌" + ("─" * len(b_lbl)) + "┐", bold=is_b_sel)
             r1_s = (
                 self.theme_engine.style(sh_col, "background", "┃", bold=True)
-                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", "selection" if is_b_sel else "background", b_lbl, bold=is_b_sel)
+                + self.theme_engine.style("bright_foreground" if is_b_sel else "foreground", btn_bg, b_lbl, bold=is_b_sel)
                 + self.theme_engine.style(b_col, "background", "│", bold=is_b_sel)
             )
             r2_s = self.theme_engine.style(sh_col, "background", "┗" + ("━" * len(b_lbl)) + "┙", bold=True)
@@ -986,6 +1255,8 @@ class MecaTUI:
         """Ejecuta la acción seleccionada dentro de la ventana modal activa."""
         state = self.modal_state
         self.modal_state = None
+        self.hover_modal_btn_idx = None
+        self.hover_autostart_app_idx = None
 
         if state == "confirm_section_change":
             if choice_idx == 0:  # Descartar cambios y cambiar de sección
@@ -1020,10 +1291,20 @@ class MecaTUI:
 
         elif state == "input_autostart":
             if choice_idx == 1:
-                cmd_clean = self.modal_input_text.strip()
-                if cmd_clean:
+                filtered = self._get_filtered_autostart_apps()
+                chosen_cmd = ""
+                chosen_name = ""
+                if filtered and 0 <= self.autostart_app_idx < len(filtered):
+                    chosen_app = filtered[self.autostart_app_idx]
+                    chosen_cmd = chosen_app["cmd"].strip()
+                    chosen_name = chosen_app["name"].strip()
+                else:
+                    chosen_cmd = self.modal_input_text.strip()
+                    chosen_name = chosen_cmd
+
+                if chosen_cmd:
                     self.autostart_items.append({
-                        "cmd": cmd_clean,
+                        "cmd": chosen_cmd,
                         "kind": self.modal_input_kind,
                         "enabled": True,
                     })
@@ -1032,11 +1313,34 @@ class MecaTUI:
                     self.saved_autostart = [dict(x) for x in self.autostart_items]
                     self.saved_settings = dict(self.settings)
                     self.section_items["autostart"] = self._build_autostart_section_items()
-                    self.status_message = f"✓ Agregado a autostart.lua: {cmd_clean}"
+                    self.status_message = f"✓ Agregado a autostart.lua: {chosen_name} ({chosen_cmd})"
                 else:
                     self.status_message = "Entrada vacia cancelada."
             else:
                 self.status_message = "Agregar a autostart cancelado."
+            self.modal_input_text = ""
+
+        elif state == "create_theme":
+            if choice_idx == 1:
+                new_name = self.modal_input_text.strip()
+                if new_name:
+                    self.status_message = f"Creando tema Omarchy '{new_name}'..."
+                    self.render()
+                    ok, msg = self.theme_engine.create_theme(
+                        new_name=new_name,
+                        base_theme=self.modal_base_theme,
+                        mode=self.modal_theme_mode,
+                        activate=True,
+                    )
+                    self._sync_theme_into_settings()
+                    self.saved_settings = dict(self.settings)
+                    self.available_themes = self.theme_engine.list_available_themes()
+                    self.section_items = self._init_section_items()
+                    self.status_message = msg
+                else:
+                    self.status_message = "Debes escribir un nombre para el nuevo tema."
+            else:
+                self.status_message = "Creacion de tema cancelada."
             self.modal_input_text = ""
 
         elif state == "input_theme_hex":
@@ -1088,20 +1392,38 @@ class MecaTUI:
         self.hover_item_idx = None
         self.hover_subcontrol = None
         self.hover_button_key = None
+        self.hover_autostart_app_idx = None
 
-        # Si hay una ventana modal de entrada de texto activa (input_autostart o input_theme_hex)
-        if self.modal_state in ("input_autostart", "input_theme_hex"):
+        # Si hay una ventana modal interactiva activa (input_autostart, create_theme o input_theme_hex)
+        if self.modal_state in ("input_autostart", "create_theme", "input_theme_hex"):
             if ch == b"\x1b" and len(ch) == 1:
                 self.modal_state = None
                 self.modal_input_text = ""
                 return
-            if ch in (b"\x1b[A", b"\x1b[B"):  # Arriba / Abajo cambia el tipo/propiedad
-                self._cycle_input_modal_kind()
-                return
+            if self.modal_state == "input_autostart":
+                filtered = self._get_filtered_autostart_apps()
+                if ch == b"\x1b[A":  # Flecha Arriba sube en la lista de aplicaciones
+                    self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
+                    return
+                if ch == b"\x1b[B":  # Flecha Abajo baja en la lista de aplicaciones
+                    if filtered:
+                        self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
+                    return
+                if ch == b"\t":  # Tab alterna el tipo (launch / exec)
+                    self._cycle_input_modal_kind()
+                    return
+            else:
+                if ch in (b"\x1b[A", b"\x1b[B"):  # Arriba / Abajo cambia plantilla o propiedad
+                    self._cycle_input_modal_kind()
+                    return
+                if ch == b"\t" and self.modal_state == "create_theme":
+                    self.modal_theme_mode = "light" if self.modal_theme_mode == "dark" else "dark"
+                    return
+
             if ch in (b"\x1b[D", b"\x1b[Z"):
                 self.modal_selected_idx = max(0, self.modal_selected_idx - 1)
                 return
-            if ch in (b"\x1b[C", b"\t"):
+            if ch == b"\x1b[C":
                 self.modal_selected_idx = min(1, self.modal_selected_idx + 1)
                 return
             if ch in (b"\r", b"\n"):
@@ -1109,6 +1431,8 @@ class MecaTUI:
                 return
             if ch in (b"\x7f", b"\x08"):  # Backspace
                 self.modal_input_text = self.modal_input_text[:-1]
+                self.autostart_app_idx = 0
+                self.autostart_app_scroll = 0
                 return
             # Caracteres imprimibles
             try:
@@ -1116,6 +1440,8 @@ class MecaTUI:
                 for c in decoded:
                     if c.isprintable() and c not in ("\r", "\n", "\t"):
                         self.modal_input_text += c
+                        self.autostart_app_idx = 0
+                        self.autostart_app_scroll = 0
             except Exception:
                 pass
             return
@@ -1143,7 +1469,7 @@ class MecaTUI:
             self.running = False
             return
 
-        # Eliminar entrada de autostart con Supr / Delete (\x1b[3~) o 'x'
+        # Eliminar entrada de autostart o tema personalizado con Supr / Delete (\x1b[3~) o 'x'
         if ch in (b"\x1b[3~", b"x", b"X"):
             sec_id = self.SECTIONS[self.current_section_idx][1]
             if sec_id == "autostart" and self.selected_item_idx >= 1:
@@ -1154,6 +1480,18 @@ class MecaTUI:
                     self.section_items["autostart"] = self._build_autostart_section_items()
                     self.selected_item_idx = max(0, min(self.selected_item_idx, len(self.section_items["autostart"]) - 1))
                     self.status_message = f"Entrada eliminada: {removed.get('cmd')} (Pulsa Aplicar para guardar)"
+            elif sec_id == "themes":
+                items = self.section_items.get("themes", [])
+                if 0 <= self.selected_item_idx < len(items):
+                    cur_item = items[self.selected_item_idx]
+                    if cur_item.key.startswith("user_theme:item:"):
+                        t_slug = cur_item.key.split(":", 2)[-1]
+                        ok, msg = self.theme_engine.delete_user_theme(t_slug)
+                        self._sync_theme_into_settings()
+                        self.saved_settings = dict(self.settings)
+                        self.section_items = self._init_section_items()
+                        self.selected_item_idx = max(0, min(self.selected_item_idx, len(self.section_items["themes"]) - 1))
+                        self.status_message = msg
             return
 
         # Atajos rápidos físicos directos (a/s: Aplicar, c: Cancelar, r: Restablecer)
@@ -1235,9 +1573,16 @@ class MecaTUI:
             return
 
     def _cycle_input_modal_kind(self) -> None:
-        """Alterna el selector de tipo en los modales de entrada de texto."""
+        """Alterna el selector de tipo o plantilla en los modales de entrada de texto."""
         if self.modal_state == "input_autostart":
             self.modal_input_kind = "exec" if self.modal_input_kind == "launch" else "launch"
+        elif self.modal_state == "create_theme":
+            themes = self.available_themes if self.available_themes else ["tokyo-night", "catppuccin", "lizarbe"]
+            try:
+                idx = (themes.index(self.modal_base_theme) + 1) % len(themes)
+            except ValueError:
+                idx = 0
+            self.modal_base_theme = themes[idx]
         elif self.modal_state == "input_theme_hex":
             order = ["accent", "background", "foreground", "selection"]
             idx = (order.index(self.modal_hex_target) + 1) % len(order) if self.modal_hex_target in order else 0
@@ -1255,11 +1600,17 @@ class MecaTUI:
         cols, rows = shutil.get_terminal_size((90, 26))
         sidebar_w = 26
 
-        # Si hay una ventana modal abierta, dirigir clics y hover al modal
+        # Si hay una ventana modal abierta, dirigir clics, rueda y hover al modal
         if self.modal_state:
             if act == b"M" and btn == 35:
                 m_ymin, m_ymax = self._modal_button_row_range
                 self.hover_modal_btn_idx = None
+                self.hover_autostart_app_idx = None
+                if self.modal_state == "input_autostart":
+                    lx_min, lx_max = self._autostart_list_x_range
+                    if y in self._autostart_list_click_map and lx_min <= x <= lx_max:
+                        self.hover_autostart_app_idx = self._autostart_list_click_map[y]
+                        return
                 if m_ymin <= y <= m_ymax:
                     for b_idx, (bx_min, bx_max) in self._modal_button_click_map.items():
                         if bx_min <= x <= bx_max:
@@ -1268,11 +1619,35 @@ class MecaTUI:
                             return
                 return
 
+            if act == b"M" and btn in (64, 65) and self.modal_state == "input_autostart":
+                filtered = self._get_filtered_autostart_apps()
+                if filtered:
+                    if btn == 64:
+                        self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
+                    else:
+                        self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
+                return
+
             if act == b"M" and btn == 0:
                 ky, kxmin, kxmax = self._modal_kind_click_range
                 if y == ky and kxmin <= x <= kxmax:
                     self._cycle_input_modal_kind()
                     return
+                if self.modal_state == "create_theme":
+                    my, mxmin, mxmax = self._modal_mode_click_range
+                    if y == my and mxmin <= x <= mxmax:
+                        self.modal_theme_mode = "light" if self.modal_theme_mode == "dark" else "dark"
+                        return
+                if self.modal_state == "input_autostart":
+                    lx_min, lx_max = self._autostart_list_x_range
+                    if y in self._autostart_list_click_map and lx_min <= x <= lx_max:
+                        clicked_idx = self._autostart_list_click_map[y]
+                        if self.autostart_app_idx == clicked_idx:
+                            self._execute_modal_choice(1)
+                        else:
+                            self.autostart_app_idx = clicked_idx
+                            self.modal_selected_idx = 1
+                        return
                 m_ymin, m_ymax = self._modal_button_row_range
                 if m_ymin <= y <= m_ymax:
                     for b_idx, (bx_min, bx_max) in self._modal_button_click_map.items():
@@ -1604,13 +1979,17 @@ class MecaTUI:
             # Previsualizar en vivo el cambio de color en el motor TUI
             if key == "omarchy:theme_accent":
                 self.theme_engine._colors["accent"] = str(val)
+                self.theme_engine.update_derived_colors()
             elif key == "omarchy:theme_bg":
                 self.theme_engine._colors["background"] = str(val)
+                self.theme_engine.update_derived_colors()
             elif key == "omarchy:theme_fg":
                 self.theme_engine._colors["foreground"] = str(val)
                 self.theme_engine._colors["bright_foreground"] = str(val)
+                self.theme_engine.update_derived_colors()
             elif key == "omarchy:theme_sel":
                 self.theme_engine._colors["selection"] = str(val)
+                self.theme_engine.update_derived_colors()
         elif key == "input:compose_key":
             self.settings["compose_key"] = "ralt" if "Alt Gr" in str(val) else "caps"
         elif key == "display:scale":
@@ -1680,12 +2059,36 @@ class MecaTUI:
             HyprIPC.set_keyword(hypr_map[key], val)
 
     def _execute_action(self, action_key: str) -> None:
-        """Ejecuta acciones especiales como modales de autostart, edición de tema Omarchy o utilidades."""
+        """Ejecuta acciones especiales como modales de autostart, creación/gestión de temas Omarchy o utilidades."""
         if action_key == "action:add_autostart":
+            self.installed_apps = self.config_sync.list_installed_applications()
             self.modal_state = "input_autostart"
             self.modal_input_text = ""
             self.modal_input_kind = "launch"
+            self.autostart_app_idx = 0
+            self.autostart_app_scroll = 0
             self.modal_selected_idx = 1
+            return
+
+        elif action_key == "action:create_theme":
+            self.modal_state = "create_theme"
+            self.modal_base_theme = self.theme_engine.current_theme
+            self.modal_theme_mode = self.theme_engine.mode
+            self.modal_input_text = ""
+            self.modal_selected_idx = 1
+            return
+
+        elif action_key == "action:clone_theme":
+            self.modal_state = "create_theme"
+            self.modal_base_theme = self.theme_engine.current_theme
+            self.modal_theme_mode = self.theme_engine.mode
+            self.modal_input_text = f"{self.theme_engine.current_theme}-custom"
+            self.modal_selected_idx = 1
+            return
+
+        elif action_key.startswith("user_theme:item:"):
+            target_slug = action_key.split(":", 2)[-1]
+            self._set_item_value("omarchy:theme", target_slug)
             return
 
         elif action_key == "action:custom_theme_hex":

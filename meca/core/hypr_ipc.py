@@ -63,14 +63,23 @@ class HyprIPC:
         return None
 
     @classmethod
-    def ensure_floating_centered(cls, width: int = 960, height: int = 680) -> bool:
+    def ensure_floating_centered(cls, width: int = 760, height: int = 920) -> bool:
         """
-        Convierte la ventana actual en una ventana flotante y centrada del tamaño indicado.
+        Convierte la ventana actual en una ventana flotante rectangular vertical y centrada.
         Retorna True si la ventana era originalmente de mosaico (tiled) y fue pasada a flotante.
         """
         win = cls.get_active_window()
         if not win:
             return False
+
+        monitors = cls.get_monitors()
+        if monitors:
+            mon = monitors[0]
+            scale = float(mon.get("scale", 1.0) or 1.0)
+            mon_w = int(mon.get("width", 1920) / scale)
+            mon_h = int(mon.get("height", 1080) / scale)
+            height = min(height, int(mon_h * 0.88))
+            width = min(width, int(mon_w * 0.82))
 
         was_tiled = not bool(win.get("floating", False))
         if was_tiled:

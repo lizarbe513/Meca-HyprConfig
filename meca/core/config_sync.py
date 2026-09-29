@@ -232,9 +232,9 @@ hl.config({{
   }},
 }})
 
--- Regla de ventana flotante y centrada para Meca HyprConfig
+-- Regla de ventana flotante rectangular vertical y centrada para Meca HyprConfig
 if o and o.window then
-  o.window("(org.omarchy.meca|meca-hyprconfig|TUI.float)", {{ float = true, center = true, size = {{ 960, 680 }} }})
+  o.window("(org.omarchy.meca|meca-hyprconfig|TUI.float)", {{ float = true, center = true, size = {{ 760, 920 }} }})
 end
 {pavu_rule}{calc_rule}"""
         try:
@@ -296,6 +296,78 @@ end
     # =========================================================================
     # GESTIÓN DE AUTOSTART (~/.config/hypr/autostart.lua)
     # =========================================================================
+
+    def list_installed_applications(self) -> List[Dict[str, str]]:
+        """
+        Escanea archivos .desktop del sistema y del usuario para ofrecer un buscador
+        y selector de aplicaciones y servicios en la sección Autostart.
+        Retorna una lista ordenada de diccionarios: [{"name": "...", "cmd": "...", "kind": "launch"|"exec"}]
+        """
+        desktop_dirs = [
+            Path("/usr/share/applications"),
+            Path("/usr/local/share/applications"),
+            Path.home() / ".local" / "share" / "applications",
+            Path("/var/lib/flatpak/exports/share/applications"),
+            Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
+        ]
+        apps: List[Dict[str, str]] = []
+        seen_cmds = set()
+
+        # Servicios de fondo frecuentes en Hyprland / Omarchy
+        builtin_services = [
+            ("Hyprsunset (Filtro de luz nocturna)", "hyprsunset", "launch"),
+            ("NetworkManager Applet (Bandeja de red)", "nm-applet --indicator", "launch"),
+            ("Blueman Applet (Bandeja Bluetooth)", "blueman-applet", "launch"),
+            ("Cliphist (Historial de portapapeles)", "wl-paste --watch cliphist store", "exec"),
+            ("Waybar (Barra de estado)", "waybar", "launch"),
+            ("Mako (Servidor de notificaciones)", "mako", "launch"),
+        ]
+        for b_name, b_cmd, b_kind in builtin_services:
+            seen_cmds.add(b_cmd)
+            apps.append({"name": b_name, "cmd": b_cmd, "kind": b_kind})
+
+        for d in desktop_dirs:
+            if not d.exists() or not d.is_dir():
+                continue
+            for p in sorted(d.glob("*.desktop")):
+                try:
+                    raw_txt = p.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+
+                # Tomar únicamente la sección principal [Desktop Entry]
+                entry_section = raw_txt.split("\n[Desktop Action")[0]
+                if (
+                    re.search(r"^NoDisplay\s*=\s*true", entry_section, re.M | re.I)
+                    or re.search(r"^Hidden\s*=\s*true", entry_section, re.M | re.I)
+                ):
+                    continue
+
+                m_name = re.search(r"^Name\s*=\s*(.+)$", entry_section, re.M)
+                m_exec = re.search(r"^Exec\s*=\s*(.+)$", entry_section, re.M)
+                if not (m_name and m_exec):
+                    continue
+
+                name = m_name.group(1).strip()
+                exec_raw = m_exec.group(1).strip()
+                # Limpiar placeholders de especificación Desktop Entry (%U, %F, %f, %u, etc.)
+                exec_clean = re.sub(r"\s+%[fFuUdDnNickvm]", "", exec_raw).strip()
+                exec_clean = re.sub(r'^"([^"]+)"$', r"\1", exec_clean).strip()
+                # Si es ruta simple en /usr/bin/<bin>, simplificar al nombre del binario para mayor legibilidad
+                if exec_clean.startswith("/usr/bin/") and " " not in exec_clean:
+                    exec_clean = exec_clean[len("/usr/bin/"):]
+
+                if not exec_clean or exec_clean in seen_cmds or exec_clean == "meca":
+                    continue
+                seen_cmds.add(exec_clean)
+                apps.append({
+                    "name": name,
+                    "cmd": exec_clean,
+                    "kind": "launch",
+                })
+
+        apps.sort(key=lambda x: x["name"].lower())
+        return apps
 
     def load_autostart_items(self) -> List[Dict[str, Any]]:
         """
