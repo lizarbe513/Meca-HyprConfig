@@ -4,7 +4,20 @@
 # ==============================================================================
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+
+# Si se ejecuta mediante curl/pipe o fuera de la carpeta del proyecto, clonar en ~/.local/share/meca-hyprconfig
+if [[ ! -f "$SCRIPT_DIR/bin/meca" || ! -f "$SCRIPT_DIR/meca/cli.py" ]]; then
+    TARGET_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/meca-hyprconfig"
+    echo -e "\033[1;34m:: Obteniendo Meca HyprConfig en $TARGET_DIR...\033[0m"
+    if [[ -d "$TARGET_DIR/.git" ]]; then
+        git -C "$TARGET_DIR" pull --ff-only || true
+    else
+        mkdir -p "$(dirname "$TARGET_DIR")"
+        git clone https://github.com/lizarbe513/Meca-HyprConfig.git "$TARGET_DIR"
+    fi
+    SCRIPT_DIR="$TARGET_DIR"
+fi
 
 echo -e "\033[1;38;2;227;27;35m"
 echo "  ███╗   ███╗███████╗ ██████╗ █████╗ "

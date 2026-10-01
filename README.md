@@ -19,13 +19,18 @@
 
 ## 🚀 Instalación
 
+Copia y pega en tu terminal:
+
 ```bash
-git clone https://github.com/lizarbe513/Meca-HyprConfig.git
-cd Meca-HyprConfig
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/lizarbe513/Meca-HyprConfig/main/install.sh | bash
 ```
 
-El instalador configura el binario `meca` en `~/.local/bin/`, el lanzador de escritorio y las reglas de ventana flotante para Hyprland.
+> **Opcional (Manual):**
+> ```bash
+> git clone https://github.com/lizarbe513/Meca-HyprConfig.git && cd Meca-HyprConfig && ./install.sh
+> ```
+
+El script clona el proyecto en `~/.local/share/meca-hyprconfig`, enlaza `meca` en `~/.local/bin/`, registra el acceso de escritorio y configura las reglas de ventana para Hyprland.
 
 ---
 
