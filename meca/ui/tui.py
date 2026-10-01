@@ -6,6 +6,7 @@ modales interactivos, gestión de Autostart, Barra Superior y edición de temas 
 """
 
 from __future__ import annotations
+import json
 import os
 import re
 import sys
@@ -14,6 +15,7 @@ import termios
 import select
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -90,11 +92,103 @@ class MecaTUI:
         "#cdd6f4", "#ececec", "#ffffff", "#eff1f5", "#000000", "#1c1c1c",
     ]
 
-    def __init__(self):
+    # Codepoints de teclas modificadoras (protocolo Kitty y keysyms Wayland/X11)
+    KITTY_MOD_MAP = {
+        57441: "SHIFT", 57447: "SHIFT", 65505: "SHIFT", 65506: "SHIFT",
+        57442: "CTRL",  57448: "CTRL",  65507: "CTRL",  65508: "CTRL",
+        57443: "ALT",   57449: "ALT",   65511: "ALT",   65512: "ALT", 65027: "ALT", 57453: "ALT",
+        57444: "SUPER", 57450: "SUPER", 65513: "SUPER", 65514: "SUPER", 65515: "SUPER", 65516: "SUPER",
+        57445: "SUPER", 57446: "SUPER", 57451: "SUPER", 57452: "SUPER",
+    }
+
+    # Mapa de codepoints de teclas especiales no imprimibles
+    SPECIAL_CODEPOINTS = {
+        13: "RETURN", 32: "SPACE", 27: "ESCAPE", 9: "TAB", 127: "BACKSPACE",
+        57376: "F1", 57377: "F2", 57378: "F3", 57379: "F4", 57380: "F5", 57381: "F6",
+        57382: "F7", 57383: "F8", 57384: "F9", 57385: "F10", 57386: "F11", 57387: "F12",
+        57352: "UP", 57353: "DOWN", 57354: "RIGHT", 57355: "LEFT",
+        57356: "PAGE_UP", 57357: "PAGE_DOWN", 57358: "HOME", 57359: "END",
+        57360: "INSERT", 57361: "DELETE", 57362: "PRINT",
+        65377: "PRINT", 65300: "PRINT", 65385: "PRINT", 65288: "BACKSPACE",
+        65289: "TAB", 65293: "RETURN", 65307: "ESCAPE", 65535: "DELETE",
+    }
+
+    _normalize_keybind_string = staticmethod(ConfigSync.normalize_keybind_string)
+
+    XKB_KEY_MAP = {
+        9: "ESCAPE", 22: "BACKSPACE", 23: "TAB", 36: "RETURN", 65: "SPACE", 66: "CAPS_LOCK",
+        37: "CTRL", 105: "CTRL",
+        50: "SHIFT", 62: "SHIFT",
+        64: "ALT", 108: "ALT",
+        133: "SUPER", 134: "SUPER",
+        107: "PRINT", 218: "PRINT",
+        110: "HOME", 111: "UP", 112: "PAGE_UP", 113: "LEFT",
+        114: "RIGHT", 115: "END", 116: "DOWN", 117: "PAGE_DOWN",
+        118: "INSERT", 119: "DELETE",
+        67: "F1", 68: "F2", 69: "F3", 70: "F4", 71: "F5", 72: "F6",
+        73: "F7", 74: "F8", 75: "F9", 76: "F10", 95: "F11", 96: "F12",
+        10: "1", 11: "2", 12: "3", 13: "4", 14: "5", 15: "6", 16: "7", 17: "8", 18: "9", 19: "0",
+        24: "Q", 25: "W", 26: "E", 27: "R", 28: "T", 29: "Y", 30: "U", 31: "I", 32: "O", 33: "P",
+        38: "A", 39: "S", 40: "D", 41: "F", 42: "G", 43: "H", 44: "J", 45: "K", 46: "L",
+        52: "Z", 53: "X", 54: "C", 55: "V", 56: "B", 57: "N", 58: "M",
+        20: "MINUS", 21: "EQUAL", 34: "BRACKETLEFT", 35: "BRACKETRIGHT",
+        47: "SEMICOLON", 48: "APOSTROPHE", 49: "GRAVE", 51: "BACKSLASH",
+        59: "comma", 60: "period", 61: "slash",
+        121: "XF86AudioMute", 122: "XF86AudioLowerVolume", 123: "XF86AudioRaiseVolume",
+        148: "XF86Calculator", 171: "XF86AudioNext", 172: "XF86AudioPlay", 173: "XF86AudioPrev",
+        232: "XF86MonBrightnessDown", 233: "XF86MonBrightnessUp",
+    }
+
+    COMPOSE_KEY_MAP = {
+        66: ("caps", "Bloq Mayús (Caps Lock)"),
+        135: ("menu", "Tecla Menú"),
+        134: ("rwin", "Super / Win Derecho"),
+        133: ("lwin", "Super / Win Izquierdo"),
+        107: ("prsc", "Impr Pant (PrtSc)"),
+        218: ("prsc", "Impr Pant (PrtSc)"),
+        118: ("ins", "Insert"),
+        127: ("paus", "Pausa (Pause)"),
+        78: ("sclk", "Bloq Despl (Scroll Lock)"),
+        105: ("rctrl", "Ctrl Derecho"),
+        37: ("lctrl", "Ctrl Izquierdo"),
+        108: ("ralt", "Alt Gr (Desactiva @)"),
+    }
+
+    @classmethod
+    def _init_xkb_key_map(cls) -> Dict[int, str]:
+        """Inicializa el mapa de keycodes con base estática y enriquece dinámicamente según la distribución del sistema."""
+        table = dict(cls.XKB_KEY_MAP)
+        try:
+            proc = subprocess.run(["xkbcli", "dump-keymap-wayland"], capture_output=True, text=True, timeout=0.3)
+            if proc.returncode == 0:
+                name_to_code = {}
+                for line in proc.stdout.splitlines():
+                    m = re.match(r"^\s*<(\w+)>\s*=\s*(\d+);", line)
+                    if m:
+                        name_to_code[m.group(1)] = int(m.group(2))
+                for line in proc.stdout.splitlines():
+                    m = re.search(r"key\s*<(\w+)>\s*\{\s*(?:type=\s*\"[^\"]*\",\s*symbols\[\d+\]=\s*)?\[\s*(\w+)", line)
+                    if m:
+                        key_name = m.group(1)
+                        sym = m.group(2)
+                        if key_name in name_to_code:
+                            code = name_to_code[key_name]
+                            if code not in table and not sym.startswith("U"):
+                                table[code] = sym.upper()
+        except Exception:
+            pass
+        return table
+
+    def __init__(self, was_tiled: Optional[bool] = None):
         self.theme_engine = ThemeEngine()
         self.config_sync = ConfigSync()
         self.running = True
         self._frame_count = 0
+        self._was_tiled = was_tiled
+        self._rec_file = f"/tmp/meca_rec_{os.getuid()}.json"
+        self._compose_rec_file = f"/tmp/meca_compose_rec_{os.getuid()}.json"
+        self.xkb_key_map = self._init_xkb_key_map()
+        self.orig_termios = None  # Inicializado aquí para evitar AttributeError en el bloque finally
 
         # Modo de ventana activa: "main" (panel principal) | "theme_creator" (ventana de creación/edición de temas)
         self.view_mode: str = "main"
@@ -168,6 +262,7 @@ class MecaTUI:
         self.modal_target_theme: str = ""
         self.pending_section_idx: Optional[int] = None
         self.pending_focus_content: bool = False
+        self._pending_delete_theme_slug: str = ""  # Slug del tema pendiente de borrar
         self._modal_button_click_map: Dict[int, Tuple[int, int]] = {}
         self._modal_button_row_range: Tuple[int, int] = (0, 0)
 
@@ -190,8 +285,34 @@ class MecaTUI:
         self.modal_theme_mode: str = "dark"
         self._modal_kind_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
         self._modal_mode_click_range: Tuple[int, int, int] = (0, 0, 0)  # (y, x_min, x_max)
-        self._modal_field_click_map: Dict[int, Tuple[int, int, int, int]] = {}  # field_idx -> (y1, y2, x1, x2)
         self._kb_field_click_ranges: Dict[int, Tuple[int, int, int, int]] = {}
+        self.modal_kb_recording: bool = False
+        self._hypr_rec_active: bool = False
+        self._last_recording_finish_time: float = 0.0
+        self._kb_held_mods: set[str] = set()
+        self._kb_currently_pressed: set[int] = set()
+        self._kb_last_combo: str = ""
+        self._kb_captured_ready: bool = False
+        self._kb_mod_chips: Dict[str, Tuple[int, int, int]] = {}
+        self._kb_rec_btn_range: Tuple[int, int, int] = (0, 0, 0)
+        self.hover_kb_mod: Optional[str] = None
+        self.hover_kb_rec: bool = False
+
+        # Estado de pestañas y selector de aplicaciones para el modal de nuevo atajo
+        self.modal_kb_tab: str = "program"  # "program" | "command"
+        self.modal_kb_app_extra: str = ""
+        self.modal_kb_app_selected_cmd: str = ""
+        self.modal_kb_app_selected_name: str = ""
+        self.modal_kb_app_idx: int = 0
+        self.modal_kb_app_scroll: int = 0
+        self.modal_kb_app_search: str = ""
+        self.modal_kb_app_dropdown_open: bool = False
+        self.hover_kb_app_idx: Optional[int] = None
+        self.hover_kb_tab: Optional[str] = None
+        self._kb_tab_click_ranges: Dict[str, Tuple[int, int, int]] = {}
+        self._kb_app_dropdown_btn_range: Tuple[int, int, int, int] = (0, 0, 0, 0)
+        self._kb_app_list_click_map: Dict[int, int] = {}
+        self._kb_app_list_x_range: Tuple[int, int] = (0, 0)
 
         # Estado del selector desplegable de aplicaciones en Autostart
         self.autostart_dropdown_open: bool = False
@@ -605,10 +726,20 @@ class MecaTUI:
                 SectionItem("header:input_kb", "TECLADO", "Distribucion y repeticion", "header"),
                 SectionItem("input:kb_layout", "Distribucion", "Idioma del teclado", "select", options=kb_layouts),
                 SectionItem("input:kb_variant", "Variante", "Disposicion de teclas", "select", options=["none", "intl", "deadtilde", "nodeadkeys", "winkeys", "dvorak", "colemak"]),
-                SectionItem("input:kb_model", "Modelo", "Tipo de teclado", "select", options=["pc105", "pc104", "pc101", "apple", "chromebook", "thinkpad"]),
-                SectionItem("input:kb_grp_toggle", "Cambiar idioma", "Atajo entre distribuciones", "select", options=["Alt Izq + Alt Der", "Alt + Shift", "Super + Espacio", "Ctrl + Shift", "Ninguno"]),
-                SectionItem("input:compose_key", "Tecla Compose", "Alt Gr o Bloq Mayus", "select", options=["Alt Gr (Compose)", "Bloq Mayús (Compose)"]),
-                SectionItem("action:fix_caps", "Corregir Bloq Mayus", "Guardar en input.lua", "action"),
+                SectionItem("input:kb_grp_toggle", "Cambiar idioma", "Atajo entre distribuciones", "select", options=["Ninguno", "Alt + Shift", "Super + Espacio", "Ctrl + Shift", "Alt Izq + Alt Der"]),
+                SectionItem("input:compose_key", "Tecla Compose", "Para caracteres especiales", "select", options=[
+                    "Desactivada (Recomendado para @)",
+                    "Bloq Mayús (Caps Lock)",
+                    "Tecla Menú",
+                    "Super / Win Derecho",
+                    "Impr Pant (PrtSc)",
+                    "Insert",
+                    "Pausa (Pause)",
+                    "Alt Gr (Desactiva @)",
+                    "󰌌 Pulsar tecla para asignar...",
+                ]),
+                SectionItem("action:record_compose", "Asignar Compose con tecla", "Pulsar una tecla fisica", "action"),
+                SectionItem("action:fix_caps", "Restaurar Bloq Mayus y @", "Desactiva Compose y bloqueos", "action"),
                 SectionItem("input:repeat_rate", "Velocidad de repeticion", "Pulsaciones por segundo", "stepper", 10, 100, 5),
                 SectionItem("input:repeat_delay", "Retardo de repeticion", "Espera inicial (ms)", "stepper", 150, 600, 25),
                 SectionItem("input:numlock_by_default", "Bloq Num al iniciar", "Activar teclado numerico", "toggle"),
@@ -694,7 +825,10 @@ class MecaTUI:
         sys.stdout.flush()
 
         # Convertir la ventana de terminal activa en flotante rectangular vertical (680x960: más altura que anchura)
-        self._was_tiled = HyprIPC.ensure_floating_centered(width=680, height=960)
+        if self._was_tiled is None:
+            self._was_tiled = HyprIPC.ensure_floating_centered(width=680, height=960)
+        else:
+            HyprIPC.ensure_floating_centered(width=680, height=960)
 
         fd = sys.stdin.fileno()
         self.orig_termios = termios.tcgetattr(fd)
@@ -721,8 +855,10 @@ class MecaTUI:
                     self.context_menu_open = False
                     self.status_message = f"Error: {exc}"
         finally:
-            # Deshabilitar ratón y hover, reactivar auto-wrap (?7h), mostrar cursor y salir de alternate buffer
-            sys.stdout.write("\033[?1006l\033[?1003l\033[?1002l\033[?1000l\033[?7h\033[?25h\033[?1049l\033[0m")
+            if getattr(self, "modal_kb_recording", False):
+                self._stop_keybind_recording()
+            # Deshabilitar ratón y hover, reactivar auto-wrap (?7h), restaurar modo de teclado (\033[<1u), mostrar cursor y salir de alternate buffer
+            sys.stdout.write("\033[<1u\033[?1006l\033[?1003l\033[?1002l\033[?1000l\033[?7h\033[?25h\033[?1049l\033[0m")
             sys.stdout.flush()
             if self.orig_termios:
                 termios.tcsetattr(fd, termios.TCSADRAIN, self.orig_termios)
@@ -785,11 +921,15 @@ class MecaTUI:
 
         # 3. Barra Inferior de Estado en fila exacta 'rows' (con guía q/Esc: Salir)
         if self.view_mode == "theme_creator":
-            keys_hint = " Esc/c: Cancelar │ a: Guardar "
+            keys_hint = " Esc/c: Cancelar │ b: Panel izq │ a: Guardar "
         else:
-            keys_hint = " Tab: Foco │ r: Restablecer │ c: Cancelar │ a: Aplicar │ q/Esc: Salir "
-            if cols < 100:
-                keys_hint = " r:Restablecer │ c:Cancelar │ a:Aplicar │ q/Esc:Salir "
+            keys_hint = " Tab: Foco │ b/Esc: Panel izq │ m: Menú │ Espacio: Conmutar │ a: Aplicar │ q: Salir "
+            if cols < 125:
+                keys_hint = " Tab: Foco │ b: Panel izq │ m: Menú │ a: Aplicar │ q: Salir "
+            if cols < 95:
+                keys_hint = " b: Panel izq │ m: Menú │ a: Aplicar │ q: Salir "
+            if cols < 75:
+                keys_hint = " b:Izq │ a:Aplicar │ q:Salir "
         max_status_w = max(8, cols - len(keys_hint) - 1)
         status_txt = f" {self.status_message}"[:max_status_w]
         footer_space = max(0, cols - 1 - len(status_txt) - len(keys_hint))
@@ -1526,6 +1666,114 @@ class MecaTUI:
         ]
         self.context_menu_open = True
 
+    def _open_context_menu_for_current_selection(self) -> None:
+        """Abre el menú contextual centrado en la opción o categoría seleccionada actualmente por teclado."""
+        if self.modal_state or self.dropdown_open:
+            return
+        cols, rows = shutil.get_terminal_size((84, 42))
+        sidebar_w = self._get_sidebar_width(cols)
+        self.dropdown_open = False
+        self.context_menu_idx = 0
+        self.hover_context_idx = None
+        self.context_menu_target_key = ""
+
+        if self.active_pane == "sidebar":
+            self.context_menu_x = min(cols - 28, 4)
+            self.context_menu_y = min(rows - 10, max(3, self.current_section_idx * 2 + 2))
+            active_sections = self._get_active_sections()
+            if 0 <= self.current_section_idx < len(active_sections):
+                s_title = active_sections[self.current_section_idx][3]
+                self.context_menu_items = [
+                    (f"sec:goto:{self.current_section_idx}", f"󰁔  Ir a {s_title}"),
+                    ("app:save", "󰄬  Aplicar cambios"),
+                    ("app:reset_all", "󰑐  Restablecer valores"),
+                    ("app:cancel", "󰅖  Cancelar y salir"),
+                ]
+                self.context_menu_open = True
+            return
+
+        active_sections = self._get_active_sections()
+        sec_id = active_sections[self.current_section_idx][1]
+        items = self.section_items.get(sec_id, [])
+        if not items or self.selected_item_idx >= len(items):
+            return
+        item = items[self.selected_item_idx]
+        self.context_menu_target_key = item.key
+        self.context_menu_x = min(cols - 35, sidebar_w + 4)
+        rel_idx = max(0, self.selected_item_idx - self.content_scroll_offset)
+        self.context_menu_y = min(rows - 10, max(4, 5 + rel_idx * 3))
+
+        if item.item_type == "theme_card" or item.key.startswith("user_theme:item:"):
+            t_name = item.name if item.item_type == "theme_card" else item.key.split(":", 2)[-1]
+            u_slugs = {self.theme_engine.normalize_theme_slug(u) for u in self.theme_engine.list_user_themes()}
+            is_user = self.theme_engine.normalize_theme_slug(t_name) in u_slugs
+            menu_items = [
+                (f"theme:select:{t_name}", f"󰸌  Seleccionar '{t_name}'"),
+                (f"theme:edit:{t_name}", f"󰏫  Editar '{t_name}'"),
+                (f"theme:clone:{t_name}", f"󰆏  Duplicar '{t_name}'"),
+                ("theme:new", "󰐕  Nuevo tema"),
+            ]
+            if is_user:
+                menu_items.append((f"theme:delete:{t_name}", f"󰆴  Borrar '{t_name}'"))
+            self.context_menu_items = menu_items
+            self.context_menu_open = True
+            return
+
+        if item.key.startswith("keybind:item:"):
+            kb_idx = int(item.key.split(":")[-1])
+            if 0 <= kb_idx < len(self.keybind_items):
+                entry = self.keybind_items[kb_idx]
+                is_en = bool(entry.get("enabled", True))
+                menu_items = [
+                    (f"kb:edit_keys:{kb_idx}", "󰌌  Cambiar teclas"),
+                    (f"kb:edit_action:{kb_idx}", "󰏫  Editar accion"),
+                    (f"kb:toggle:{kb_idx}", "󰔡  Desactivar atajo" if is_en else "󰔡  Activar atajo"),
+                ]
+                if entry.get("is_custom"):
+                    menu_items.append((f"kb:delete:{kb_idx}", "󰆴  Eliminar atajo"))
+                else:
+                    menu_items.append((f"kb:reset:{kb_idx}", "󰑐  Restaurar original"))
+                menu_items.append(("kb:new", "󰐕  Nuevo atajo"))
+                self.context_menu_items = menu_items
+                self.context_menu_open = True
+                return
+
+        if item.key.startswith("autostart:item:"):
+            as_idx = int(item.key.split(":")[-1])
+            if 0 <= as_idx < len(self.autostart_items):
+                is_en = bool(self.autostart_items[as_idx].get("enabled", True))
+                self.context_menu_items = [
+                    (f"as:toggle:{as_idx}", "󰔡  Desactivar" if is_en else "󰔡  Activar"),
+                    (f"as:delete:{as_idx}", "󰆴  Eliminar"),
+                    ("as:add", "󰐕  Agregar a Autostart"),
+                ]
+                self.context_menu_open = True
+                return
+
+        if sec_id == "themes":
+            cur_t = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))
+            u_slugs = {self.theme_engine.normalize_theme_slug(u) for u in self.theme_engine.list_user_themes()}
+            is_user = self.theme_engine.normalize_theme_slug(cur_t) in u_slugs
+            menu_items = [
+                ("theme:new", "󰐕  Nuevo tema"),
+                (f"theme:edit:{cur_t}", f"󰏫  Editar '{cur_t}'"),
+                (f"theme:clone:{cur_t}", f"󰆏  Duplicar '{cur_t}'"),
+            ]
+            if is_user:
+                menu_items.append((f"theme:delete:{cur_t}", f"󰆴  Borrar '{cur_t}'"))
+            self.context_menu_items = menu_items
+            self.context_menu_open = True
+            return
+
+        self.context_menu_items = [
+            ("item:activate", f"󰏫  Modificar '{item.name[:20]}'"),
+            ("item:reset_one", "󰑐  Restablecer opcion"),
+            ("pane:sidebar", "󰁍  Volver a barra lateral (b)"),
+            ("app:save", "󰄬  Aplicar cambios"),
+            ("app:reset_all", "󰑐  Restablecer todo"),
+        ]
+        self.context_menu_open = True
+
     def _render_context_menu_overlay(self, cols: int, rows: int) -> List[str]:
         """Renderiza el menú contextual flotante de clic secundario."""
         self._context_row_map.clear()
@@ -1586,6 +1834,10 @@ class MecaTUI:
             return
         if act_id == "app:cancel":
             self.cancel_changes()
+            return
+        if act_id == "pane:sidebar":
+            self.active_pane = "sidebar"
+            self.status_message = "Foco en el panel izquierdo (Barra lateral)."
             return
 
         if act_id == "item:activate":
@@ -1690,6 +1942,38 @@ class MecaTUI:
             if q in app["name"].lower() or q in app["cmd"].lower()
         ]
 
+    def _get_filtered_kb_apps(self) -> List[Dict[str, str]]:
+        """Filtra la lista de aplicaciones instaladas según el texto buscado en el selector de programas para el atajo."""
+        if not self.installed_apps:
+            self.installed_apps = self.config_sync.list_installed_applications()
+        q = self.modal_kb_app_search.strip().lower()
+        if not q:
+            return self.installed_apps
+        return [
+            app for app in self.installed_apps
+            if q in app["name"].lower() or q in app["cmd"].lower()
+        ]
+
+    def _select_kb_dropdown_app(self, idx: int) -> None:
+        """Selecciona una aplicación de la lista desplegable de programas para el nuevo atajo."""
+        filtered = self._get_filtered_kb_apps()
+        if 0 <= idx < len(filtered):
+            app = filtered[idx]
+            self.modal_kb_app_selected_cmd = app["cmd"].strip()
+            self.modal_kb_app_selected_name = app["name"].strip()
+            if not self.modal_kb_desc.strip() or self.modal_kb_desc.strip() == "Nuevo atajo":
+                self.modal_kb_desc = app["name"].strip()
+            self.modal_kb_app_dropdown_open = False
+            self.modal_kb_app_search = ""
+            self.modal_kb_field = 2  # Salta a casilla de comandos extras
+            self.status_message = f"✓ Programa seleccionado: {app['name']}"
+
+    def _get_keybind_max_field(self) -> int:
+        """Retorna el índice del último campo de entrada antes de la botonera en el modal de atajo."""
+        if self.modal_state == "add_keybind":
+            return 3 if getattr(self, "modal_kb_tab", "program") == "program" else 2
+        return 1
+
     def _render_modal_overlay(self, cols: int, rows: int) -> List[str]:
         """Renderiza ventanas modales centradas."""
         self._modal_button_click_map.clear()
@@ -1698,6 +1982,11 @@ class MecaTUI:
         self._autostart_dropdown_btn_range = (0, 0, 0, 0)
         self._autostart_list_click_map.clear()
         self._kb_field_click_ranges.clear()
+        self._kb_mod_chips.clear()
+        self._kb_rec_btn_range = (0, 0, 0)
+        self._kb_tab_click_ranges.clear()
+        self._kb_app_dropdown_btn_range = (0, 0, 0, 0)
+        self._kb_app_list_click_map.clear()
 
         if self.modal_state == "input_autostart":
             return self._render_autostart_modal(cols, rows)
@@ -1705,6 +1994,8 @@ class MecaTUI:
             return self._render_input_modal(cols, rows)
         if self.modal_state in ("edit_keybind", "add_keybind"):
             return self._render_keybind_modal(cols, rows)
+        if self.modal_state == "record_compose":
+            return self._render_compose_modal(cols, rows)
 
         if self.modal_state == "confirm_section_change":
             title = " CAMBIOS SIN APLICAR "
@@ -1807,21 +2098,28 @@ class MecaTUI:
     def _render_keybind_modal(self, cols: int, rows: int) -> List[str]:
         """Renderiza el modal para editar o crear un atajo de teclado del sistema."""
         is_add = (self.modal_state == "add_keybind")
-        title = " NUEVO ATAJO " if is_add else f" EDITAR ATAJO: {self.modal_kb_desc[:28]} "
+        title = " NUEVO ATAJO " if is_add else f" EDITAR ATAJO: {self.modal_kb_desc[:26]} "
 
-        mw = min(64, cols - 4)
+        mw = min(70, cols - 4)
         inner_mw = mw - 2
         box_w = inner_mw - 6
-        fields_spec = [
-            (0, "Combinacion de teclas (ej. SUPER + RETURN):", self.modal_kb_keys),
-            (1, "Comando o accion:", self.modal_kb_action),
-        ]
-        if is_add:
-            fields_spec.append((2, "Nombre del atajo:", self.modal_kb_desc))
 
-        mh = 8 + len(fields_spec) * 4
+        is_prog = (is_add and getattr(self, "modal_kb_tab", "program") == "program")
+        filtered_apps = self._get_filtered_kb_apps() if is_prog else []
+        list_rows = max(3, min(5, rows - 24)) if (is_prog and self.modal_kb_app_dropdown_open) else 0
+
+        # Altura calculada dinámicamente según el modo y despliegue
+        if not is_add:
+            mh = 16
+        elif is_prog:
+            base_h = 24 if rows < 28 else 26
+            mh = min(rows - 2, base_h + list_rows)
+        else:
+            base_h = 20 if rows < 28 else 22
+            mh = min(rows - 2, base_h)
+
         start_x = max(2, (cols - mw) // 2)
-        start_y = max(2, (rows - mh) // 2)
+        start_y = max(1, (rows - mh) // 2)
 
         overlay: List[str] = []
         top_line = "┌" + ("─" * inner_mw) + "┐"
@@ -1834,25 +2132,265 @@ class MecaTUI:
         overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
 
         cur_y = start_y + 3
-        for f_idx, f_lbl, f_val in fields_spec:
-            is_f_active = (self.modal_kb_field == f_idx)
-            shown_txt = ((f_val + "█") if is_f_active else f_val)[-box_w:].ljust(box_w)
-            f_col = "accent" if is_f_active else "muted"
-            f_txt_col = "bright_foreground" if is_f_active else "foreground"
-            f_bg = "soft_selection" if is_f_active else "background"
 
-            input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
-            input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
-            input_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+        if is_add:
+            # ==========================================
+            # PESTAÑAS SUPERIORES: PROGRAMA / COMANDO
+            # ==========================================
+            tab_prog_lbl = " [ 󰘳 Ejecutar Programa ] "
+            tab_cmd_lbl = " [  Ejecutar Comando ] "
+            is_t_prog = (self.modal_kb_tab == "program")
+            is_t_cmd = (self.modal_kb_tab == "command")
 
-            self._kb_field_click_ranges[f_idx] = (cur_y + 1, cur_y + 3, start_x + 2, start_x + inner_mw - 2)
+            prog_hov = (getattr(self, "hover_kb_tab", None) == "program")
+            cmd_hov = (getattr(self, "hover_kb_tab", None) == "command")
 
-            overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃  " + f_lbl.ljust(inner_mw - 2)[:inner_mw - 2] + "│"))
-            overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_top + "│"))
-            overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style(f_txt_col, f_bg, "┃" + input_mid + "│", bold=is_f_active))
-            overlay.append(f"\033[{cur_y + 3};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_bot + "│"))
+            prog_bg = "accent" if is_t_prog else ("soft_hover" if prog_hov else "background")
+            prog_fg = "background" if is_t_prog else ("bright_foreground" if prog_hov else "muted")
+            prog_styled = self.theme_engine.style(prog_fg, prog_bg, tab_prog_lbl, bold=(is_t_prog or prog_hov))
+
+            cmd_bg = "accent" if is_t_cmd else ("soft_hover" if cmd_hov else "background")
+            cmd_fg = "background" if is_t_cmd else ("bright_foreground" if cmd_hov else "muted")
+            cmd_styled = self.theme_engine.style(cmd_fg, cmd_bg, tab_cmd_lbl, bold=(is_t_cmd or cmd_hov))
+
+            gap_w = 2
+            total_tabs_w = len(tab_prog_lbl) + gap_w + len(tab_cmd_lbl)
+            pad_l = max(1, (inner_mw - total_tabs_w) // 2)
+            pad_r = max(0, inner_mw - total_tabs_w - pad_l)
+
+            t_prog_x1 = start_x + 1 + pad_l
+            t_prog_x2 = t_prog_x1 + len(tab_prog_lbl) - 1
+            t_cmd_x1 = t_prog_x2 + 1 + gap_w
+            t_cmd_x2 = t_cmd_x1 + len(tab_cmd_lbl) - 1
+            self._kb_tab_click_ranges["program"] = (cur_y, t_prog_x1, t_prog_x2)
+            self._kb_tab_click_ranges["command"] = (cur_y, t_cmd_x1, t_cmd_x2)
+
+            tab_line = (
+                self.theme_engine.style("foreground", "background", "┃" + (" " * pad_l))
+                + prog_styled
+                + self.theme_engine.style("foreground", "background", " " * gap_w)
+                + cmd_styled
+                + self.theme_engine.style("foreground", "background", (" " * pad_r) + "│")
+            )
+            overlay.append(f"\033[{cur_y};{start_x}H" + tab_line)
+            cur_y += 1
+            overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+            cur_y += 1
+
+        # ==========================================
+        # CAMPO 0: COMBINACIÓN DE TECLAS Y CAPTURA
+        # ==========================================
+        is_f0_active = (self.modal_kb_field == 0)
+        is_recording = getattr(self, "modal_kb_recording", False)
+
+        # Fila 1: Etiqueta y Botón de Captura
+        rec_btn_lbl = " [ 󰌌 Grabando... ] " if is_recording else " [ 󰌌 Capturar teclas ] "
+        rec_btn_w = len(rec_btn_lbl)
+        rec_btn_bg = "accent" if is_recording else ("soft_hover" if getattr(self, "hover_kb_rec", False) else "soft_selection")
+        rec_btn_fg = "background" if is_recording else "bright_foreground"
+        rec_btn_str = self.theme_engine.style(rec_btn_fg, rec_btn_bg, rec_btn_lbl, bold=True)
+
+        lbl_keys = "  Combinación de teclas:"
+        pad_gap = max(1, inner_mw - len(lbl_keys) - rec_btn_w)
+        overlay.append(
+            f"\033[{cur_y};{start_x}H"
+            + self.theme_engine.style("foreground", "background", "┃")
+            + self.theme_engine.style("muted", "background", lbl_keys + (" " * pad_gap))
+            + rec_btn_str
+            + self.theme_engine.style("foreground", "background", "│")
+        )
+
+        rec_x_start = start_x + 1 + len(lbl_keys) + pad_gap
+        self._kb_rec_btn_range = (cur_y, rec_x_start, rec_x_start + rec_btn_w - 1)
+        cur_y += 1
+
+        # Fila 2: Modificadores interactivos (chips)
+        chip_header = "  Modificadores: "
+        chip_line_parts = [self.theme_engine.style("muted", "background", chip_header)]
+        chip_cur_x = start_x + 1 + len(chip_header)
+        plain_len = len(chip_header)
+        current_mods_set = {m.strip().upper() for m in self.modal_kb_keys.split("+")}
+        if is_recording:
+            current_mods_set.update(getattr(self, "_kb_held_mods", set()))
+
+        for mod in ("SUPER", "CTRL", "ALT", "SHIFT"):
+            is_active = (mod in current_mods_set)
+            is_hov = (getattr(self, "hover_kb_mod", None) == mod)
+            chip_lbl = f"[{mod}]"
+            chip_w = len(chip_lbl)
+            chip_bg = "accent" if is_active else ("soft_hover" if is_hov else "background")
+            chip_fg = "background" if is_active else ("bright_foreground" if is_hov else "muted")
+            chip_styled = self.theme_engine.style(chip_fg, chip_bg, chip_lbl, bold=(is_active or is_hov))
+            chip_line_parts.append(chip_styled + " ")
+            self._kb_mod_chips[mod] = (cur_y, chip_cur_x, chip_cur_x + chip_w - 1)
+            chip_cur_x += chip_w + 1
+            plain_len += chip_w + 1
+
+        chip_pad = max(0, inner_mw - plain_len)
+        overlay.append(
+            f"\033[{cur_y};{start_x}H"
+            + self.theme_engine.style("foreground", "background", "┃")
+            + "".join(chip_line_parts)
+            + self.theme_engine.style("foreground", "background", (" " * chip_pad) + "│")
+        )
+        cur_y += 1
+
+        # Filas 3..5: Caja de la combinación
+        if is_recording:
+            if self.modal_kb_keys.strip():
+                shown_txt = f"󰌌 {self.modal_kb_keys.strip()} (suelta para guardar)"
+            else:
+                shown_txt = "󰌌 Presiona combinación (Esc: Cancelar)"
+            f0_col = "accent"
+            f0_txt_col = "bright_foreground"
+            f0_bg = "soft_hover"
+        else:
+            val_txt = self.modal_kb_keys.strip()
+            if not val_txt:
+                shown_txt = "(Enter: Capturar │ 1:Super 2:Ctrl 3:Alt 4:Shift)"
+                f0_txt_col = "muted"
+            else:
+                shown_txt = (val_txt + ("█" if is_f0_active else ""))
+                f0_txt_col = "bright_foreground" if is_f0_active else "foreground"
+            f0_col = "accent" if is_f0_active else "muted"
+            f0_bg = "soft_selection" if is_f0_active else "background"
+
+        shown_txt_pad = shown_txt[-box_w:].ljust(box_w)
+        input0_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+        input0_mid = f"  ┃{shown_txt_pad}│  ".ljust(inner_mw)[:inner_mw]
+        input0_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+
+        self._kb_field_click_ranges[0] = (cur_y, cur_y + 2, start_x + 2, start_x + inner_mw - 2)
+
+        overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style(f0_col, "background", "┃" + input0_top + "│"))
+        overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style(f0_txt_col, f0_bg, "┃" + input0_mid + "│", bold=(is_f0_active or is_recording)))
+        overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style(f0_col, "background", "┃" + input0_bot + "│"))
+        cur_y += 3
+
+        # ==========================================
+        # CAMPOS ESPECÍFICOS SEGÚN PESTAÑA / MODO
+        # ==========================================
+        if is_prog:
+            # CAMPO 1: SELECTOR DESPLEGABLE DE PROGRAMAS DEL SISTEMA
+            is_f1_active = (self.modal_kb_field == 1)
+            arrow_char = "▴" if self.modal_kb_app_dropdown_open else "▾"
+            if self.modal_kb_app_selected_name:
+                dd_txt = f" {self.modal_kb_app_selected_name} ({self.modal_kb_app_selected_cmd})"
+            elif filtered_apps and 0 <= self.modal_kb_app_idx < len(filtered_apps):
+                cur_a = filtered_apps[self.modal_kb_app_idx]
+                dd_txt = f" {cur_a['name']} — {cur_a['cmd']}"
+            else:
+                dd_txt = " Seleccionar programa del sistema..."
+
+            if self.modal_kb_app_search.strip():
+                dd_txt = f" [{self.modal_kb_app_search.strip()}]" + dd_txt
+
+            dd_inner = (dd_txt[: box_w - 3].ljust(box_w - 3)) + f" {arrow_char} "
+            dd_lbl = "  Programa del sistema:"
+
+            dd_border_col = "accent" if (is_f1_active or self.modal_kb_app_dropdown_open) else "muted"
+            dd_bg = "soft_hover" if self.modal_kb_app_dropdown_open else ("soft_selection" if is_f1_active else "background")
+            dd_txt_col = "bright_foreground" if (is_f1_active or self.modal_kb_app_dropdown_open) else "foreground"
+
+            dd_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+            dd_mid = f"  ┃{dd_inner}│  ".ljust(inner_mw)[:inner_mw]
+            dd_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+
+            self._kb_field_click_ranges[1] = (cur_y + 1, cur_y + 3, start_x + 2, start_x + inner_mw - 2)
+            self._kb_app_dropdown_btn_range = (cur_y + 1, cur_y + 3, start_x + 2, start_x + inner_mw - 2)
+
+            overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + dd_lbl.ljust(inner_mw)[:inner_mw] + "│"))
+            overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style(dd_border_col, "background", "┃" + dd_top + "│"))
+            overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style(dd_txt_col, dd_bg, "┃" + dd_mid + "│", bold=(is_f1_active or self.modal_kb_app_dropdown_open)))
+            overlay.append(f"\033[{cur_y + 3};{start_x}H" + self.theme_engine.style(dd_border_col, "background", "┃" + dd_bot + "│"))
             cur_y += 4
 
+            if self.modal_kb_app_dropdown_open and list_rows > 0:
+                if self.modal_kb_app_idx >= len(filtered_apps):
+                    self.modal_kb_app_idx = max(0, len(filtered_apps) - 1)
+                if self.modal_kb_app_idx < self.modal_kb_app_scroll:
+                    self.modal_kb_app_scroll = self.modal_kb_app_idx
+                elif self.modal_kb_app_idx >= self.modal_kb_app_scroll + list_rows:
+                    self.modal_kb_app_scroll = self.modal_kb_app_idx - list_rows + 1
+                self.modal_kb_app_scroll = max(0, min(self.modal_kb_app_scroll, max(0, len(filtered_apps) - list_rows)))
+
+                self._kb_app_list_x_range = (start_x + 3, start_x + inner_mw - 3)
+                for r_off in range(list_rows):
+                    row_y = cur_y + r_off
+                    f_idx = self.modal_kb_app_scroll + r_off
+                    if f_idx < len(filtered_apps):
+                        app = filtered_apps[f_idx]
+                        self._kb_app_list_click_map[row_y] = f_idx
+                        is_app_sel = (f_idx == self.modal_kb_app_idx)
+                        is_app_hov = (f_idx == self.hover_kb_app_idx)
+                        marker = " ▸ " if (is_app_sel or is_app_hov) else "   "
+                        name_w = max(16, box_w - 24)
+                        cmd_w = max(8, box_w - name_w - 5)
+                        app_name = app["name"][:name_w].ljust(name_w)
+                        app_cmd = app["cmd"][:cmd_w].rjust(cmd_w)
+                        item_row = f"{marker}{app_name} {app_cmd} "[:box_w].ljust(box_w)
+                        row_bg = "soft_hover" if is_app_hov else ("soft_selection" if is_app_sel else "soft_muted")
+                        row_fg = "bright_foreground" if (is_app_sel or is_app_hov) else "foreground"
+                        overlay.append(
+                            f"\033[{row_y};{start_x}H"
+                            + self.theme_engine.style("foreground", "background", "┃  │")
+                            + self.theme_engine.style(row_fg, row_bg, item_row, bold=(is_app_sel or is_app_hov))
+                            + self.theme_engine.style("foreground", "background", "│  │")
+                        )
+                    else:
+                        empty_dd = (" " * box_w)
+                        overlay.append(f"\033[{row_y};{start_x}H" + self.theme_engine.style("foreground", "background", f"┃  │{empty_dd}│  │"))
+                cur_y += list_rows
+
+            prog_fields = [
+                (2, "Comandos extras o argumentos (opcional):", self.modal_kb_app_extra),
+                (3, "Nombre del atajo:", self.modal_kb_desc),
+            ]
+            for f_idx, f_lbl, f_val in prog_fields:
+                is_f_active = (self.modal_kb_field == f_idx)
+                shown_txt = ((f_val + "█") if is_f_active else f_val)[-box_w:].ljust(box_w)
+                f_col = "accent" if is_f_active else "muted"
+                f_txt_col = "bright_foreground" if is_f_active else "foreground"
+                f_bg = "soft_selection" if is_f_active else "background"
+
+                input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+                input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
+                input_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+
+                self._kb_field_click_ranges[f_idx] = (cur_y + 1, cur_y + 3, start_x + 2, start_x + inner_mw - 2)
+
+                overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃  " + f_lbl.ljust(inner_mw - 2)[:inner_mw - 2] + "│"))
+                overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_top + "│"))
+                overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style(f_txt_col, f_bg, "┃" + input_mid + "│", bold=is_f_active))
+                overlay.append(f"\033[{cur_y + 3};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_bot + "│"))
+                cur_y += 4
+        else:
+            other_fields = [(1, "Comando o accion:", self.modal_kb_action)]
+            if is_add:
+                other_fields.append((2, "Nombre del atajo:", self.modal_kb_desc))
+
+            for f_idx, f_lbl, f_val in other_fields:
+                is_f_active = (self.modal_kb_field == f_idx)
+                shown_txt = ((f_val + "█") if is_f_active else f_val)[-box_w:].ljust(box_w)
+                f_col = "accent" if is_f_active else "muted"
+                f_txt_col = "bright_foreground" if is_f_active else "foreground"
+                f_bg = "soft_selection" if is_f_active else "background"
+
+                input_top = ("  ┌" + ("─" * box_w) + "┐  ").ljust(inner_mw)[:inner_mw]
+                input_mid = f"  ┃{shown_txt}│  ".ljust(inner_mw)[:inner_mw]
+                input_bot = ("  └" + ("─" * box_w) + "┘  ").ljust(inner_mw)[:inner_mw]
+
+                self._kb_field_click_ranges[f_idx] = (cur_y + 1, cur_y + 3, start_x + 2, start_x + inner_mw - 2)
+
+                overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃  " + f_lbl.ljust(inner_mw - 2)[:inner_mw - 2] + "│"))
+                overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_top + "│"))
+                overlay.append(f"\033[{cur_y + 2};{start_x}H" + self.theme_engine.style(f_txt_col, f_bg, "┃" + input_mid + "│", bold=is_f_active))
+                overlay.append(f"\033[{cur_y + 3};{start_x}H" + self.theme_engine.style(f_col, "background", "┃" + input_bot + "│"))
+                cur_y += 4
+
+        # ==========================================
+        # BOTONERA DEL MODAL
+        # ==========================================
         modal_btns = [
             (0, " Cancelar "),
             (1, " Guardar "),
@@ -2188,6 +2726,53 @@ class MecaTUI:
         overlay.append(f"\033[{start_y + 11};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
         return overlay
 
+    def _render_compose_modal(self, cols: int, rows: int) -> List[str]:
+        """Renderiza la ventana modal interactiva para asignar tecla Compose física."""
+        title = " ASIGNAR TECLA COMPOSE "
+        mw = min(66, cols - 4)
+        inner_mw = mw - 2
+        start_x = max(2, (cols - mw) // 2)
+        start_y = max(2, (rows - 15) // 2)
+
+        overlay: List[str] = []
+        top_line = "┌" + ("─" * inner_mw) + "┐"
+        title_centered = title.center(inner_mw)[:inner_mw]
+        sep_line = "├" + ("─" * inner_mw) + "┤"
+        bot_line = "┗" + ("━" * inner_mw) + "┙"
+
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "background", top_line, bold=True))
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┃" + title_centered + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", sep_line))
+
+        lines = [
+            "󰌌  Pulsa en tu teclado fisico la tecla para Compose:",
+            "",
+            " Teclas soportadas por XKB:",
+            "   • Bloq Mayus (Caps Lock)    • Tecla Menu",
+            "   • Super / Win Derecho       • Impr Pant (PrtSc)",
+            "   • Insert / Pausa            • Scroll Lock",
+            "   • Ctrl Derecho              • Ctrl Izquierdo",
+            "",
+            " [!] NOTA: Alt Gr NO se recomienda (desactiva el @)",
+            "",
+            " [Esc / Borrar]  Desactivar Compose (Recomendado)",
+        ]
+
+        for i, l in enumerate(lines):
+            l_pad = f" {l}".ljust(inner_mw)[:inner_mw]
+            if "[!]" in l:
+                c_name = "error"
+            elif "•" in l or "[Esc" in l:
+                c_name = "bright_foreground"
+            elif i == 0:
+                c_name = "accent"
+            else:
+                c_name = "text"
+            overlay.append(f"\033[{start_y + 3 + i};{start_x}H" + self.theme_engine.style(c_name, "background", "│" + l_pad + "│"))
+
+        overlay.append(f"\033[{start_y + 3 + len(lines)};{start_x}H" + self.theme_engine.style("accent", "background", bot_line, bold=True))
+        return overlay
+
     # ==========================
     # LECTURA Y ESCRITURA DE VALORES
     # ==========================
@@ -2252,7 +2837,8 @@ class MecaTUI:
         "input:kb_layout": ("kb_layout", str, "es"),
         "input:kb_variant": ("kb_variant", str, ""),
         "input:kb_model": ("kb_model", str, "pc105"),
-        "input:kb_grp_toggle": ("kb_grp_toggle", str, "Alt Izq + Alt Der"),
+        "input:kb_grp_toggle": ("kb_grp_toggle", str, "Ninguno"),
+        "input:compose_key": ("compose_key", str, "none"),
         "input:repeat_rate": ("repeat_rate", int, 40),
         "input:repeat_delay": ("repeat_delay", int, 250),
         "input:numlock_by_default": ("numlock", bool, True),
@@ -2367,11 +2953,26 @@ class MecaTUI:
             return m if m else "pc105"
 
         if key == "input:kb_grp_toggle":
-            g = str(self.settings.get("kb_grp_toggle", "Alt Izq + Alt Der")).strip()
-            return g if g else "Alt Izq + Alt Der"
+            g = str(self.settings.get("kb_grp_toggle", "Ninguno")).strip()
+            return g if g else "Ninguno"
 
         if key == "input:compose_key":
-            return "Alt Gr (Compose)" if self.settings.get("compose_key", "ralt") == "ralt" else "Bloq Mayús (Compose)"
+            ck = str(self.settings.get("compose_key", "none")).lower().strip()
+            labels = {
+                "none": "Desactivada (Recomendado para @)",
+                "caps": "Bloq Mayús (Caps Lock)",
+                "menu": "Tecla Menú",
+                "rwin": "Super / Win Derecho",
+                "lwin": "Super / Win Izquierdo",
+                "prsc": "Impr Pant (PrtSc)",
+                "ins": "Insert",
+                "paus": "Pausa (Pause)",
+                "sclk": "Bloq Despl (Scroll Lock)",
+                "rctrl": "Ctrl Derecho",
+                "lctrl": "Ctrl Izquierdo",
+                "ralt": "Alt Gr (Desactiva @)",
+            }
+            return labels.get(ck, f"compose:{ck}" if ck not in ("", "none") else "Desactivada (Recomendado para @)")
 
         if key == "display:scale":
             sc = float(self.settings.get("monitor_scale", 1.0))
@@ -2459,6 +3060,569 @@ class MecaTUI:
         self.modal_kb_action = str(entry.get("cmd", ""))
         self.modal_kb_desc = str(entry.get("title", ""))
         self.modal_selected_idx = 1
+        self.modal_kb_recording = False
+
+    def _start_keybind_recording(self) -> None:
+        """Activa el modo de escucha interactiva de atajos de teclado y el submap en Hyprland."""
+        self.modal_kb_recording = True
+        self._kb_held_mods.clear()
+        self._kb_currently_pressed.clear()
+        self._kb_last_combo = ""
+        self._kb_captured_ready = False
+
+        if os.path.exists(self._rec_file):
+            try:
+                os.remove(self._rec_file)
+            except Exception:
+                pass
+
+        self._kb_held_mods.clear()
+        self._kb_currently_pressed.clear()
+        self._kb_captured_ready = False
+        self._kb_last_combo = ""
+        self.modal_kb_keys = "..."
+        self.status_message = "󰌌  Presiona combinación de teclas (suelta la 1ª tecla para guardar)..."
+        try:
+            sys.stdout.write("\033[>31u")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+        lua_rec = f"""
+_G.__meca_rec_active = true
+_G.__meca_first_key = nil
+_G.__meca_held = {{}}
+_G.__meca_all_pressed = {{}}
+_G.__meca_done = false
+_G.__meca_file = "{self._rec_file}"
+
+local function write_state()
+    local held_arr = {{}}
+    for k, v in pairs(_G.__meca_held or {{}}) do
+        if v then table.insert(held_arr, k) end
+    end
+    local all_arr = {{}}
+    for k, v in pairs(_G.__meca_all_pressed or {{}}) do
+        if v then table.insert(all_arr, k) end
+    end
+    local f = io.open(_G.__meca_file, "w")
+    if f then
+        f:write(string.format('{{"active":%s,"done":%s,"first":%s,"held":[%s],"all":[%s]}}',
+            _G.__meca_rec_active and "true" or "false",
+            _G.__meca_done and "true" or "false",
+            _G.__meca_first_key and tostring(_G.__meca_first_key) or "null",
+            table.concat(held_arr, ","),
+            table.concat(all_arr, ",")
+        ))
+        f:close()
+    end
+end
+
+_G.__meca_key_callback = function(keycode, time_ms, state)
+    if _G.__meca_compose_rec and _G.__meca_compose_callback then
+        _G.__meca_compose_callback(keycode, time_ms, state)
+        return
+    end
+    if not _G.__meca_rec_active then return end
+    if keycode == 0 then return end
+    if state == 1 then
+        if _G.__meca_first_key == nil then
+            _G.__meca_first_key = keycode
+            _G.__meca_all_pressed = {{}}
+            _G.__meca_held = {{}}
+        end
+        _G.__meca_held[keycode] = true
+        _G.__meca_all_pressed[keycode] = true
+        write_state()
+    elseif state == 0 then
+        _G.__meca_held[keycode] = nil
+        local count_held = 0
+        for _ in pairs(_G.__meca_held or {{}}) do count_held = count_held + 1 end
+        if _G.__meca_first_key ~= nil and (keycode == _G.__meca_first_key or count_held == 0) then
+            _G.__meca_done = true
+            _G.__meca_rec_active = false
+            write_state()
+        else
+            write_state()
+        end
+    end
+end
+
+write_state()
+
+if not _G.__meca_hook_installed then
+    _G.__meca_hook_installed = true
+    hl.on("input.keyboard.key", function(keycode, time_ms, state)
+        if _G.__meca_key_callback then
+            _G.__meca_key_callback(keycode, time_ms, state)
+        end
+    end)
+end
+
+hl.define_submap("meca_rec", function() hl.bind("escape", hl.dsp.submap("reset")) end)
+hl.dispatch(hl.dsp.submap("meca_rec"))
+"""
+        try:
+            res = HyprIPC.eval(lua_rec)
+            self._hypr_rec_active = (res is not None)
+        except Exception:
+            self._hypr_rec_active = False
+
+    def _stop_keybind_recording(self) -> None:
+        """Desactiva el modo de escucha interactiva y restaura el submap en Hyprland."""
+        self.modal_kb_recording = False
+        self._hypr_rec_active = False
+        self._last_recording_finish_time = time.time()
+        self._kb_held_mods.clear()
+        self._kb_currently_pressed.clear()
+        self._kb_captured_ready = False
+        try:
+            sys.stdout.write("\033[<1u")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        try:
+            HyprIPC.eval('_G.__meca_rec_active = false; hl.dispatch(hl.dsp.submap("reset"))')
+        except Exception:
+            pass
+        if os.path.exists(self._rec_file):
+            try:
+                os.remove(self._rec_file)
+            except Exception:
+                pass
+        try:
+            import termios
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+        except Exception:
+            pass
+
+    def _start_compose_recording(self) -> None:
+        """Inicia el modo interactivo para asignar una tecla Compose física."""
+        self.modal_state = "record_compose"
+        if os.path.exists(self._compose_rec_file):
+            try:
+                os.remove(self._compose_rec_file)
+            except Exception:
+                pass
+        self.status_message = "󰌌  Pulsa la tecla física para Compose (Esc para cancelar/desactivar)..."
+
+        lua_comp = f"""
+_G.__meca_compose_rec = true
+_G.__meca_compose_file = "{self._compose_rec_file}"
+
+_G.__meca_compose_callback = function(keycode, time_ms, state)
+    if not _G.__meca_compose_rec then return end
+    if state == 1 and keycode > 0 then
+        _G.__meca_compose_rec = false
+        local f = io.open(_G.__meca_compose_file, "w")
+        if f then
+            f:write(string.format('{{"code":%d}}', keycode))
+            f:close()
+        end
+    end
+end
+
+if not _G.__meca_hook_installed then
+    _G.__meca_hook_installed = true
+    hl.on("input.keyboard.key", function(keycode, time_ms, state)
+        if _G.__meca_compose_rec and _G.__meca_compose_callback then
+            _G.__meca_compose_callback(keycode, time_ms, state)
+        elseif _G.__meca_key_callback then
+            _G.__meca_key_callback(keycode, time_ms, state)
+        end
+    end)
+end
+
+hl.define_submap("meca_comp_rec", function() hl.bind("escape", hl.dsp.submap("reset")) end)
+hl.dispatch(hl.dsp.submap("meca_comp_rec"))
+"""
+        try:
+            HyprIPC.eval(lua_comp)
+        except Exception:
+            pass
+
+    def _stop_compose_recording(self) -> None:
+        """Desactiva la escucha de tecla Compose interactiva."""
+        try:
+            HyprIPC.eval('_G.__meca_compose_rec = false; hl.dispatch(hl.dsp.submap("reset"))')
+        except Exception:
+            pass
+        if hasattr(self, "_compose_rec_file") and os.path.exists(self._compose_rec_file):
+            try:
+                os.remove(self._compose_rec_file)
+            except Exception:
+                pass
+
+    def _apply_compose_choice(self, compose_key: str, key_name: str) -> None:
+        """Aplica la tecla Compose seleccionada por el usuario."""
+        self._stop_compose_recording()
+        self.modal_state = None
+        self.settings["compose_key"] = compose_key
+        self.saved_settings["compose_key"] = compose_key
+        self.config_sync.fix_caps_lock(compose_key=compose_key)
+        self.config_sync.save_gui_settings(self.settings, apply_live=True)
+        self.status_message = f"✓ Tecla Compose asignada a: {key_name}"
+
+    def _check_compose_recording(self) -> bool:
+        """Comprueba si Hyprland capturó la tecla para Compose."""
+        if self.modal_state != "record_compose":
+            return False
+        if hasattr(self, "_compose_rec_file") and os.path.exists(self._compose_rec_file):
+            try:
+                with open(self._compose_rec_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                code = data.get("code")
+                if code:
+                    if code in (9, 22):
+                        self._apply_compose_choice("none", "Desactivada (Recomendado)")
+                        return True
+                    if code in self.COMPOSE_KEY_MAP:
+                        c_id, c_lbl = self.COMPOSE_KEY_MAP[code]
+                        self._apply_compose_choice(c_id, c_lbl)
+                        return True
+                    else:
+                        key_sym = self.xkb_key_map.get(code, f"Code_{code}")
+                        self.status_message = f"Tecla '{key_sym}' no admitida por XKB Compose. Usa Caps, Menú, Win, PrtSc..."
+                        self._stop_compose_recording()
+                        self.modal_state = None
+                        return True
+            except Exception:
+                pass
+        return False
+
+    def _check_hyprland_keybind_recording(self) -> bool:
+        """Lee el estado del capturador de teclado en tiempo real desde Hyprland. Retorna True si la captura finalizo o se cancelo."""
+        if not getattr(self, "modal_kb_recording", False):
+            return False
+        if not os.path.exists(self._rec_file):
+            return False
+        try:
+            with open(self._rec_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return False
+
+        all_codes = data.get("all", [])
+        first_code = data.get("first")
+        is_done = bool(data.get("done", False))
+
+        # Si el usuario presiono Escape como primera tecla, cancelar
+        if first_code == 9 and len(all_codes) == 1:
+            self._stop_keybind_recording()
+            self.status_message = "Captura de atajo cancelada."
+            return True
+
+        if not all_codes:
+            return False
+
+        key_names = [self.xkb_key_map.get(c, f"KEY_{c}") for c in all_codes]
+        combo = self._normalize_keybind_string(" + ".join(key_names))
+
+        if is_done:
+            self.modal_kb_keys = combo
+            self._stop_keybind_recording()
+            self.status_message = f"✓ Atajo capturado: {combo} (Pulsa Enter en Guardar)"
+            max_field = self._get_keybind_max_field()
+            self.modal_kb_field = max_field + 1
+            self.modal_selected_idx = 1
+            return True
+        else:
+            self.modal_kb_keys = combo + " ..."
+            self.status_message = f"󰌌  {combo} detectado... suelta la primera tecla para guardar"
+            return False
+
+    @classmethod
+    def _codepoint_to_key_name(cls, cp: int) -> str:
+        """Mapea un codepoint del protocolo Kitty a nombre canonico de tecla para Hyprland."""
+        if cp in cls.SPECIAL_CODEPOINTS:
+            return cls.SPECIAL_CODEPOINTS[cp]
+        if 33 <= cp <= 126:
+            char = chr(cp).upper()
+            char_map = {
+                ",": "comma", ".": "period", "/": "slash", "-": "MINUS", "=": "EQUAL",
+                ";": "SEMICOLON", "'": "APOSTROPHE", "`": "GRAVE", "\\": "BACKSLASH",
+                "[": "BRACKETLEFT", "]": "BRACKETRIGHT"
+            }
+            return char_map.get(char, char)
+        return f"KEY_{cp}"
+
+    def _handle_keybind_recording_input(self, ch: bytes) -> bool:
+        """
+        Gestiona la captura interactiva en tiempo real.
+        - Mantiene la acumulacion de modificadores y teclas mientras se presionan.
+        - Actualiza la previsualizacion en vivo.
+        - Soporta combinaciones complejas como SUPER + CTRL + M, Impr pant, etc.
+        """
+        # Esc solo (sin modificadores) cancela la grabacion
+        if ch == b"\x1b" and len(ch) == 1:
+            self._stop_keybind_recording()
+            self.status_message = "Captura de atajo cancelada."
+            return True
+
+        # 1. Comprobar secuencias Kitty keyboard protocol: \x1b[ <codepoint> [;<modifiers>] [:<event>] u
+        kitty_pattern = rb"\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?u"
+        kitty_matches = list(re.finditer(kitty_pattern, ch))
+
+        if kitty_matches:
+            for m in kitty_matches:
+                codepoint = int(m.group(1))
+                mod_mask = int(m.group(2) or 1) - 1
+                event = int(m.group(3) or 1)  # 1: press, 2: repeat, 3: release
+
+                kitty_mods = set()
+                if mod_mask & 8: kitty_mods.add("SUPER")
+                if mod_mask & 4: kitty_mods.add("CTRL")
+                if mod_mask & 2: kitty_mods.add("ALT")
+                if mod_mask & 1: kitty_mods.add("SHIFT")
+
+                is_mod = codepoint in self.KITTY_MOD_MAP
+                mod_name = self.KITTY_MOD_MAP.get(codepoint)
+
+                if is_mod:
+                    if event in (1, 2):
+                        self._kb_currently_pressed.add(codepoint)
+                        if mod_name:
+                            self._kb_held_mods.add(mod_name)
+                        self._kb_held_mods.update(kitty_mods)
+                        mods_order = [mod for mod in ("SUPER", "CTRL", "ALT", "SHIFT") if mod in self._kb_held_mods]
+                        self.modal_kb_keys = " + ".join(mods_order + ["..."])
+                        self.status_message = f"󰌌  {' + '.join(mods_order)} presionado... presiona la siguiente tecla"
+                    elif event == 3:
+                        self._kb_currently_pressed.discard(codepoint)
+                        if mod_name:
+                            self._kb_held_mods.discard(mod_name)
+                        if self._kb_captured_ready and self._kb_last_combo:
+                            if len(self._kb_currently_pressed) == 0:
+                                self.modal_kb_keys = self._kb_last_combo
+                                self._stop_keybind_recording()
+                                self.status_message = f"✓ Atajo capturado: {self.modal_kb_keys} (Pulsa Enter en Guardar)"
+                                max_field = self._get_keybind_max_field()
+                                self.modal_kb_field = max_field + 1
+                                self.modal_selected_idx = 1
+                                return True
+                        else:
+                            if len(self._kb_currently_pressed) == 0 and mod_name:
+                                self.modal_kb_keys = mod_name
+                                self._stop_keybind_recording()
+                                self.status_message = f"✓ Atajo capturado: {self.modal_kb_keys} (Pulsa Enter en Guardar)"
+                                max_field = self._get_keybind_max_field()
+                                self.modal_kb_field = max_field + 1
+                                self.modal_selected_idx = 1
+                                return True
+                            mods_order = [mod for mod in ("SUPER", "CTRL", "ALT", "SHIFT") if mod in self._kb_held_mods]
+                            self.modal_kb_keys = (" + ".join(mods_order + ["..."])) if mods_order else ""
+                else:
+                    # Tecla principal (M, RETURN, SPACE, PRINT, etc.)
+                    if event in (1, 2):
+                        if codepoint == 27 and not kitty_mods and not self._kb_held_mods:
+                            self._stop_keybind_recording()
+                            self.status_message = "Captura de atajo cancelada."
+                            return True
+
+                        self._kb_currently_pressed.add(codepoint)
+                        all_mods = set(kitty_mods) | self._kb_held_mods
+                        key_name = self._codepoint_to_key_name(codepoint)
+                        combo = self._normalize_keybind_string(" + ".join(list(all_mods) + [key_name]))
+
+                        self._kb_last_combo = combo
+                        self._kb_captured_ready = True
+                        self.modal_kb_keys = combo
+                        self.status_message = f"󰌌  {combo} detectado. Suelta las teclas para guardar..."
+                    elif event == 3:
+                        self._kb_currently_pressed.discard(codepoint)
+                        if self._kb_captured_ready and self._kb_last_combo:
+                            if len(self._kb_currently_pressed) == 0:
+                                self.modal_kb_keys = self._kb_last_combo
+                                self._stop_keybind_recording()
+                                self.status_message = f"✓ Atajo capturado: {self.modal_kb_keys} (Pulsa Enter en Guardar)"
+                                max_field = self._get_keybind_max_field()
+                                self.modal_kb_field = max_field + 1
+                                self.modal_selected_idx = 1
+                                return True
+                            else:
+                                self.modal_kb_keys = self._kb_last_combo
+                                self.status_message = f"󰌌  {self._kb_last_combo} capturado. Suelta las teclas restantes..."
+            return True
+
+        # 2. Fallback para terminales o secuencias sin protocolo Kitty (ANSI clasico)
+        combo = self._parse_key_combination(ch)
+        if combo:
+            parts = [p.strip().upper() for p in combo.split("+") if p.strip()]
+            det_mods = [m for m in ("SUPER", "CTRL", "ALT", "SHIFT") if m in parts]
+            main_keys = [k for k in parts if k not in ("SUPER", "CTRL", "ALT", "SHIFT")]
+
+            all_mods = set(self._kb_held_mods) | set(det_mods)
+            ordered_mods = [m for m in ("SUPER", "CTRL", "ALT", "SHIFT") if m in all_mods]
+
+            if main_keys:
+                final_combo = " + ".join(ordered_mods + main_keys)
+            elif ordered_mods:
+                final_combo = " + ".join(ordered_mods)
+            else:
+                final_combo = combo
+
+            final_combo = self._normalize_keybind_string(final_combo)
+            self.modal_kb_keys = final_combo
+            self._stop_keybind_recording()
+            self.status_message = f"✓ Atajo capturado: {final_combo} (Pulsa Enter en Guardar)"
+            max_field = self._get_keybind_max_field()
+            self.modal_kb_field = max_field + 1
+            self.modal_selected_idx = 1
+            return True
+
+        return True
+
+    def _toggle_kb_modifier(self, mod: str) -> None:
+        """Alterna un modificador (SUPER, CTRL, ALT, SHIFT) en la combinación del modal."""
+        mod = mod.upper().strip()
+        all_mods = ["SUPER", "CTRL", "ALT", "SHIFT"]
+        norm = self._normalize_keybind_string(self.modal_kb_keys)
+        parts = [p.strip().upper() for p in norm.split("+") if p.strip()]
+        active_mods = [m for m in all_mods if m in parts]
+        main_keys = [k for k in parts if k not in all_mods]
+
+        if mod in active_mods:
+            active_mods.remove(mod)
+        else:
+            active_mods.append(mod)
+            active_mods = [m for m in all_mods if m in active_mods]
+
+        if getattr(self, "modal_kb_recording", False):
+            self._kb_held_mods = set(active_mods)
+            if main_keys:
+                self.modal_kb_keys = " + ".join(active_mods + main_keys)
+            elif active_mods:
+                self.modal_kb_keys = " + ".join(active_mods + ["..."])
+            else:
+                self.modal_kb_keys = ""
+        else:
+            if active_mods or main_keys:
+                self.modal_kb_keys = " + ".join(active_mods + main_keys)
+            else:
+                self.modal_kb_keys = ""
+        self.status_message = f"Atajo: {self.modal_kb_keys}"
+
+    def _parse_key_combination(self, data: bytes) -> str:
+        """Interpreta secuencias de terminal (Kitty protocol, CSI, SS3, ANSI) como combinaciones de teclas legibles."""
+        if not data:
+            return ""
+
+        # 1. Kitty keyboard protocol: \x1b[ <codepoint> ; <modifier> [: <event>] u
+        m = re.match(rb"^\x1b\[(\d+)(?:;(\d+))?(?::(\d+))?u$", data)
+        if m:
+            codepoint = int(m.group(1))
+            mod_mask = int(m.group(2) or 1) - 1
+            event = int(m.group(3) or 1)
+            if event == 3 or codepoint in self.KITTY_MOD_MAP:
+                return ""
+            mods = []
+            if mod_mask & 8: mods.append("SUPER")
+            if mod_mask & 4: mods.append("CTRL")
+            if mod_mask & 2: mods.append("ALT")
+            if mod_mask & 1: mods.append("SHIFT")
+            key_name = self._codepoint_to_key_name(codepoint)
+            return " + ".join(mods + [key_name])
+
+        # 2. Secuencias directas exactas (navegación, Print Screen / Impr Pant, F1-F4)
+        plain_nav = {
+            b"\x1b[A": "UP", b"\x1b[B": "DOWN", b"\x1b[C": "RIGHT", b"\x1b[D": "LEFT",
+            b"\x1b[H": "HOME", b"\x1b[F": "END",
+            b"\x1b[2~": "INSERT", b"\x1b[3~": "DELETE", b"\x1b[5~": "PAGE_UP", b"\x1b[6~": "PAGE_DOWN",
+            b"\x1b[19~": "PRINT", b"\x1b[20~": "PRINT", b"\x1b[32~": "PRINT", b"\x1b[57362~": "PRINT",
+            b"\x1b[1;2P": "SHIFT + PRINT", b"\x1b[1;3P": "ALT + PRINT", b"\x1b[1;5P": "CTRL + PRINT",
+            b"\x1b[1;6P": "CTRL + SHIFT + PRINT", b"\x1b[1;9P": "SUPER + PRINT",
+            b"\x1b[1;13P": "SUPER + CTRL + PRINT",
+            b"\x1bOP": "F1", b"\x1bOQ": "F2", b"\x1bOR": "F3", b"\x1bOS": "F4",
+            b"\x1b[Z": "SHIFT + TAB",
+        }
+        if data in plain_nav:
+            return plain_nav[data]
+
+        # 3. CSI con modificador: \x1b[ 1 ; <mod> <A|B|C|D|H|F> o \x1b[ 1 ; <mod> <P|Q|R|S>
+        m = re.match(rb"^\x1b\[(?:1;)?(\d+)([ABCDHFPQRS])$", data)
+        if m:
+            mod_mask = int(m.group(1)) - 1
+            d = m.group(2).decode("ascii", errors="ignore")
+            dirs = {
+                "A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT", "H": "HOME", "F": "END",
+                "P": "F1", "Q": "F2", "R": "F3", "S": "F4"
+            }
+            mods = []
+            if mod_mask & 8: mods.append("SUPER")
+            if mod_mask & 4: mods.append("CTRL")
+            if mod_mask & 2: mods.append("ALT")
+            if mod_mask & 1: mods.append("SHIFT")
+            return " + ".join(mods + [dirs.get(d, d)])
+
+        # 4. CSI tilde con modificador: \x1b[ <num> ; <mod> ~
+        m = re.match(rb"^\x1b\[(\d+)(?:;(\d+))?~$", data)
+        if m:
+            num = int(m.group(1))
+            mod_mask = int(m.group(2) or 1) - 1
+            num_keys = {
+                2: "INSERT", 3: "DELETE", 5: "PAGE_UP", 6: "PAGE_DOWN",
+                15: "F5", 17: "F6", 18: "F7", 19: "PRINT", 20: "PRINT", 21: "F10", 23: "F11", 24: "F12",
+                32: "PRINT", 57362: "PRINT"
+            }
+            if num in num_keys:
+                mods = []
+                if mod_mask & 8: mods.append("SUPER")
+                if mod_mask & 4: mods.append("CTRL")
+                if mod_mask & 2: mods.append("ALT")
+                if mod_mask & 1: mods.append("SHIFT")
+                return " + ".join(mods + [num_keys[num]])
+
+        # 7. Alt + tecla (\x1b + char)
+        if len(data) == 2 and data[0] == 0x1B:
+            c = data[1]
+            if c in (10, 13):
+                return "ALT + RETURN"
+            if c == 0x20:
+                return "ALT + SPACE"
+            if c in (0x7F, 0x08):
+                return "ALT + BACKSPACE"
+            if c == 0x09:
+                return "ALT + TAB"
+            if 1 <= c <= 26:
+                return f"CTRL + ALT + {chr(c + 64)}"
+            if 32 <= c <= 126:
+                ch_raw = chr(c).upper()
+                char_map = {
+                    ",": "comma", ".": "period", "/": "slash", "-": "MINUS", "=": "EQUAL",
+                    ";": "SEMICOLON", "'": "APOSTROPHE", "`": "GRAVE", "\\": "BACKSLASH",
+                    "[": "BRACKETLEFT", "]": "BRACKETRIGHT"
+                }
+                return f"ALT + {char_map.get(ch_raw, ch_raw)}"
+
+        # 8. Carácter de control o tecla simple
+        if len(data) == 1:
+            b = data[0]
+            if b == 0:
+                return "CTRL + SPACE"
+            if 1 <= b <= 26:
+                if b == 9: return "TAB"
+                if b in (10, 13):
+                    # Si CTRL está activo o ya seleccionado, se interpreta como la letra M o J
+                    if getattr(self, "modal_kb_recording", False) and "CTRL" in getattr(self, "_kb_held_mods", set()):
+                        return "M" if b == 13 else "J"
+                    return "CTRL + M" if b == 13 else "CTRL + J"
+                return f"CTRL + {chr(b + 64)}"
+            if b in (0x7F, 0x08):
+                return "BACKSPACE"
+            if b == 0x1B:
+                return "ESCAPE"
+            if b == 0x20:
+                return "SPACE"
+            if 33 <= b <= 126:
+                ch_char = chr(b).upper()
+                char_map = {
+                    ",": "comma", ".": "period", "/": "slash", "-": "MINUS", "=": "EQUAL",
+                    ";": "SEMICOLON", "'": "APOSTROPHE", "`": "GRAVE", "\\": "BACKSLASH",
+                    "[": "BRACKETLEFT", "]": "BRACKETRIGHT"
+                }
+                return char_map.get(ch_char, ch_char)
+
+        return ""
 
     def _open_theme_editor(self, theme_name: str) -> None:
         """Abre el Estudio de Temas precargado con el tema indicado para editarlo."""
@@ -2492,6 +3656,8 @@ class MecaTUI:
 
     def _execute_modal_choice(self, choice_idx: int) -> None:
         """Ejecuta la acción seleccionada dentro de la ventana modal activa."""
+        if getattr(self, "modal_kb_recording", False):
+            self._stop_keybind_recording()
         state = self.modal_state
         self.modal_state = None
         self.hover_modal_btn_idx = None
@@ -2545,29 +3711,49 @@ class MecaTUI:
             if 0 <= self.modal_kb_idx < len(self.keybind_items):
                 entry = self.keybind_items[self.modal_kb_idx]
                 if choice_idx == 1:
-                    new_k = self.modal_kb_keys.strip()
+                    new_k = self._normalize_keybind_string(self.modal_kb_keys)
                     new_a = self.modal_kb_action.strip()
                     if new_k:
                         entry["keys"] = new_k
                     if new_a:
                         entry["cmd"] = new_a
                     self._sync_keybinds_into_settings()
+                    self.config_sync.save_keybinds(self.keybind_items)
+                    self.saved_keybinds = [dict(x) for x in self.keybind_items]
                     self.section_items["keybinds"] = self._build_keybinds_section_items()
-                    self.status_message = f"Atajo '{entry.get('title')}' actualizado (Pulsa 'Aplicar')."
+                    self.status_message = f"✓ Atajo '{entry.get('title')}' guardado: {new_k}"
                 elif choice_idx == 2:
                     cur_en = bool(entry.get("enabled", True))
                     entry["enabled"] = not cur_en
                     self._sync_keybinds_into_settings()
+                    self.config_sync.save_keybinds(self.keybind_items)
+                    self.saved_keybinds = [dict(x) for x in self.keybind_items]
                     self.section_items["keybinds"] = self._build_keybinds_section_items()
-                    self.status_message = f"Atajo {'activado' if not cur_en else 'desactivado'} (Pulsa 'Aplicar')."
+                    self.status_message = f"✓ Atajo '{entry.get('title')}' {'activado' if not cur_en else 'desactivado'}."
                 else:
                     self.status_message = "Edicion de atajo cancelada."
 
         elif state == "add_keybind":
             if choice_idx == 1:
-                new_k = self.modal_kb_keys.strip()
-                new_a = self.modal_kb_action.strip()
-                new_d = self.modal_kb_desc.strip() or new_a
+                new_k = self._normalize_keybind_string(self.modal_kb_keys)
+                if getattr(self, "modal_kb_tab", "program") == "program":
+                    base_cmd = self.modal_kb_app_selected_cmd.strip()
+                    if not base_cmd:
+                        filtered = self._get_filtered_kb_apps()
+                        if filtered and 0 <= self.modal_kb_app_idx < len(filtered):
+                            base_cmd = filtered[self.modal_kb_app_idx]["cmd"].strip()
+                            if not self.modal_kb_app_selected_name:
+                                self.modal_kb_app_selected_name = filtered[self.modal_kb_app_idx]["name"].strip()
+                    extra_cmd = self.modal_kb_app_extra.strip()
+                    if base_cmd and extra_cmd:
+                        new_a = f"{base_cmd} {extra_cmd}"
+                    else:
+                        new_a = base_cmd
+                    new_d = self.modal_kb_desc.strip() or self.modal_kb_app_selected_name.strip() or new_a
+                else:
+                    new_a = self.modal_kb_action.strip()
+                    new_d = self.modal_kb_desc.strip() or new_a
+
                 if new_k and new_a:
                     self.keybind_items.append({
                         "id": f"custom_{len(self.keybind_items)}",
@@ -2583,8 +3769,10 @@ class MecaTUI:
                         "is_custom": True,
                     })
                     self._sync_keybinds_into_settings()
+                    self.config_sync.save_keybinds(self.keybind_items)
+                    self.saved_keybinds = [dict(x) for x in self.keybind_items]
                     self.section_items["keybinds"] = self._build_keybinds_section_items()
-                    self.status_message = f"Atajo '{new_d}' agregado (Pulsa 'Aplicar')."
+                    self.status_message = f"✓ Atajo '{new_d}' guardado: {new_k}"
                 else:
                     self.status_message = "Atajo incompleto cancelado."
             else:
@@ -2655,8 +3843,11 @@ class MecaTUI:
         if not items:
             return
         idx = self.selected_item_idx + delta
-        while 0 <= idx < len(items) and items[idx].item_type == "header":
+        max_steps = len(items) + 1
+        steps = 0
+        while 0 <= idx < len(items) and items[idx].item_type == "header" and steps < max_steps:
             idx += (1 if delta >= 0 else -1)
+            steps += 1
         if idx < 0:
             self.selected_item_idx = 0
         elif idx >= len(items):
@@ -2665,12 +3856,46 @@ class MecaTUI:
         else:
             self.selected_item_idx = idx
 
-    def handle_input(self, fd: int) -> None:
-        r, _, _ = select.select([fd], [], [], 0.05)
-        if not r:
-            return
+    def handle_input(self, fd: Any) -> None:
+        if isinstance(fd, (bytes, bytearray)):
+            ch = bytes(fd)
+        else:
+            if getattr(self, "modal_kb_recording", False):
+                if self._check_hyprland_keybind_recording():
+                    try:
+                        import termios
+                        termios.tcflush(fd, termios.TCIFLUSH)
+                    except Exception:
+                        pass
+                    return
+            if self._check_compose_recording():
+                return
 
-        ch = os.read(fd, 4096)
+            r, _, _ = select.select([fd], [], [], 0.04)
+            if not r:
+                if getattr(self, "modal_kb_recording", False):
+                    if self._check_hyprland_keybind_recording():
+                        try:
+                            import termios
+                            termios.tcflush(fd, termios.TCIFLUSH)
+                        except Exception:
+                            pass
+                        return
+                if self._check_compose_recording():
+                    return
+                return
+
+            # Descartar rafagas de caracteres residuales posteriores a la finalizacion de una captura
+            if time.time() - getattr(self, "_last_recording_finish_time", 0.0) < 0.25:
+                try:
+                    os.read(fd, 4096)
+                    import termios
+                    termios.tcflush(fd, termios.TCIFLUSH)
+                except Exception:
+                    pass
+                return
+
+            ch = os.read(fd, 4096)
         if not ch:
             return
 
@@ -2694,15 +3919,24 @@ class MecaTUI:
         self.hover_dropdown_idx = None
         self.hover_context_idx = None
 
+        # 0a. Si la ventana modal de tecla Compose está activa
+        if self.modal_state == "record_compose":
+            if self._check_compose_recording():
+                return
+            if ch in (b"\x1b", b"\x7f", b"\x08"):
+                self._apply_compose_choice("none", "Desactivada (Recomendado)")
+                return
+            return
+
         # 0. Si el menú contextual de clic secundario está abierto
         if self.context_menu_open and not self.modal_state:
-            if ch == b"\x1b" and len(ch) == 1:
+            if ch in (b"\x1b", b"q", b"Q") and len(ch) == 1:
                 self.context_menu_open = False
                 return
-            if ch == b"\x1b[A":
+            if ch in (b"\x1b[A", b"k", b"K"):  # Arriba / k
                 self.context_menu_idx = max(0, self.context_menu_idx - 1)
                 return
-            if ch == b"\x1b[B":
+            if ch in (b"\x1b[B", b"j", b"J"):  # Abajo / j
                 self.context_menu_idx = min(len(self.context_menu_items) - 1, self.context_menu_idx + 1)
                 return
             if ch in (b"\r", b"\n", b" "):
@@ -2717,14 +3951,26 @@ class MecaTUI:
 
         # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
         if self.dropdown_open and not self.modal_state:
-            if ch == b"\x1b" and len(ch) == 1:
+            if ch in (b"\x1b", b"q", b"Q") and len(ch) == 1:
                 self.dropdown_open = False
                 return
-            if ch == b"\x1b[A":  # Arriba
+            if ch in (b"\x1b[A", b"k", b"K"):  # Arriba / k
                 self.dropdown_idx = max(0, self.dropdown_idx - 1)
                 return
-            if ch == b"\x1b[B":  # Abajo
+            if ch in (b"\x1b[B", b"j", b"J"):  # Abajo / j
                 self.dropdown_idx = min(len(self.dropdown_options) - 1, self.dropdown_idx + 1)
+                return
+            if ch in (b"\x1b[5~",):  # Page Up
+                self.dropdown_idx = max(0, self.dropdown_idx - 5)
+                return
+            if ch in (b"\x1b[6~",):  # Page Down
+                self.dropdown_idx = min(len(self.dropdown_options) - 1, self.dropdown_idx + 5)
+                return
+            if ch in (b"\x1b[H", b"\x1b[1~"):  # Home
+                self.dropdown_idx = 0
+                return
+            if ch in (b"\x1b[F", b"\x1b[4~"):  # End
+                self.dropdown_idx = max(0, len(self.dropdown_options) - 1)
                 return
             if ch in (b"\r", b"\n", b" "):
                 if self.dropdown_item and 0 <= self.dropdown_idx < len(self.dropdown_options):
@@ -2747,36 +3993,170 @@ class MecaTUI:
                         self._set_item_value(target_key, chosen)
                 self.dropdown_open = False
                 return
+            try:
+                char = ch.decode("utf-8", errors="ignore").lower()
+                if len(char) == 1 and char.isalnum():
+                    for o_idx, opt in enumerate(self.dropdown_options):
+                        if opt.lower().startswith(char):
+                            self.dropdown_idx = o_idx
+                            break
+                    return
+            except Exception:
+                pass
             return
 
         # 1b. Si el modal de edición/creación de atajos está activo
         if self.modal_state in ("edit_keybind", "add_keybind"):
-            max_field = 2 if self.modal_state == "add_keybind" else 1
+            max_field = self._get_keybind_max_field()
+            btn_field = max_field + 1
             max_btn = 1 if self.modal_state == "add_keybind" else 2
+
+            # Modo de captura interactiva activa (escuchando combinación directa en tiempo real)
+            if getattr(self, "modal_kb_recording", False):
+                if self._check_hyprland_keybind_recording():
+                    try:
+                        import termios
+                        termios.tcflush(fd, termios.TCIFLUSH)
+                    except Exception:
+                        pass
+                    return
+                if ch == b"\x1b" and len(ch) == 1:
+                    self._stop_keybind_recording()
+                    self.status_message = "Captura de atajo cancelada."
+                    return
+                if not getattr(self, "_hypr_rec_active", False) and not os.path.exists(self._rec_file):
+                    self._handle_keybind_recording_input(ch)
+                return
+
             if ch == b"\x1b" and len(ch) == 1:
+                if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program" and self.modal_kb_app_dropdown_open:
+                    self.modal_kb_app_dropdown_open = False
+                    return
                 self.modal_state = None
                 return
-            if ch in (b"\t", b"\x1b[B"):
-                self.modal_kb_field = (self.modal_kb_field + 1) % (max_field + 1)
+
+            # Atajos directos para alternar pestañas superiores en modo creación
+            if self.modal_state == "add_keybind":
+                if ch in (b"\x1bOP", b"\x1b[11~", b"\x1b[[A", b"\x1b1"):  # F1 o Alt+1 -> Programa
+                    self.modal_kb_tab = "program"
+                    self.modal_kb_app_dropdown_open = False
+                    if self.modal_kb_field > 3:
+                        self.modal_kb_field = 0
+                    return
+                if ch in (b"\x1bOQ", b"\x1b[12~", b"\x1b[[B", b"\x1b2"):  # F2 o Alt+2 -> Comando
+                    self.modal_kb_tab = "command"
+                    self.modal_kb_app_dropdown_open = False
+                    if self.modal_kb_field > 2:
+                        self.modal_kb_field = 0
+                    return
+
+            # Si el foco está en la barra de pestañas (-1)
+            if self.modal_state == "add_keybind" and self.modal_kb_field == -1:
+                if ch in (b"\x1b[D", b"h", b"H", b"\x1b[C", b"l", b"L"):
+                    self.modal_kb_tab = "command" if self.modal_kb_tab == "program" else "program"
+                    self.modal_kb_app_dropdown_open = False
+                    return
+                if ch in (b"\t", b"\x1b[B", b"\r", b"\n"):
+                    self.modal_kb_field = 0
+                    return
+                if ch in (b"\x1b[A", b"\x1b[Z"):
+                    self.modal_kb_field = btn_field
+                    return
+
+            if self.modal_kb_field == 0 and ch in (b"1", b"2", b"3", b"4"):
+                mod_map = {b"1": "SUPER", b"2": "CTRL", b"3": "ALT", b"4": "SHIFT"}
+                self._toggle_kb_modifier(mod_map[ch])
                 return
-            if ch == b"\x1b[A":
-                self.modal_kb_field = (self.modal_kb_field - 1) % (max_field + 1)
+
+            # Interacción con la lista desplegable de programas (Campo 1 en modo 'program')
+            if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program" and self.modal_kb_field == 1:
+                filtered_kb = self._get_filtered_kb_apps()
+                if self.modal_kb_app_dropdown_open:
+                    if ch in (b"\x1b[A", b"k", b"K"):
+                        self.modal_kb_app_idx = max(0, self.modal_kb_app_idx - 1)
+                        return
+                    if ch in (b"\x1b[B", b"j", b"J"):
+                        if filtered_kb:
+                            self.modal_kb_app_idx = min(len(filtered_kb) - 1, self.modal_kb_app_idx + 1)
+                        return
+                    if ch == b"\x1b[5~":
+                        self.modal_kb_app_idx = max(0, self.modal_kb_app_idx - 5)
+                        return
+                    if ch == b"\x1b[6~" and filtered_kb:
+                        self.modal_kb_app_idx = min(len(filtered_kb) - 1, self.modal_kb_app_idx + 5)
+                        return
+                    if ch in (b"\r", b"\n"):
+                        self._select_kb_dropdown_app(self.modal_kb_app_idx)
+                        return
+                    if ch == b"\t":
+                        self.modal_kb_app_dropdown_open = False
+                        self.modal_kb_field = 2
+                        return
+                else:
+                    if ch in (b"\r", b"\n", b" ", b"\x1b[B"):
+                        self.modal_kb_app_dropdown_open = True
+                        return
+
+            if ch in (b"\t", b"\x1b[B"):  # Tab o Flecha Abajo avanza campos
+                if self.modal_kb_field == btn_field:
+                    self.modal_kb_field = -1 if self.modal_state == "add_keybind" else 0
+                else:
+                    self.modal_kb_field += 1
                 return
-            if ch in (b"\x1b[D", b"\x1b[Z"):
+            if ch in (b"\x1b[A", b"\x1b[Z"):  # Flecha Arriba o Shift+Tab retrocede
+                if self.modal_kb_field == -1:
+                    self.modal_kb_field = btn_field
+                elif self.modal_kb_field == 0:
+                    self.modal_kb_field = -1 if self.modal_state == "add_keybind" else btn_field
+                else:
+                    self.modal_kb_field -= 1
+                return
+            if ch in (b"\x1b[D", b"h", b"H"):  # Flecha Izquierda / h
                 self.modal_selected_idx = max(0, self.modal_selected_idx - 1)
                 return
-            if ch == b"\x1b[C":
+            if ch in (b"\x1b[C", b"l", b"L"):  # Flecha Derecha / l
                 self.modal_selected_idx = min(max_btn, self.modal_selected_idx + 1)
                 return
             if ch in (b"\r", b"\n"):
-                self._execute_modal_choice(self.modal_selected_idx)
-                return
+                if self.modal_kb_field == 0:
+                    self._start_keybind_recording()
+                    return
+                elif self.modal_kb_field == btn_field:
+                    self._execute_modal_choice(self.modal_selected_idx)
+                    return
+                elif self.modal_kb_field < max_field:
+                    self.modal_kb_field += 1
+                    return
+                else:
+                    self._execute_modal_choice(1)
+                    return
+            if ch == b" ":
+                if self.modal_kb_field == 0:
+                    self._start_keybind_recording()
+                    return
+                elif self.modal_kb_field == btn_field:
+                    self._execute_modal_choice(self.modal_selected_idx)
+                    return
             if ch in (b"\x7f", b"\x08"):
                 if self.modal_kb_field == 0:
-                    self.modal_kb_keys = self.modal_kb_keys[:-1]
+                    s = self.modal_kb_keys.rstrip()
+                    if " + " in s:
+                        self.modal_kb_keys = s.rsplit(" + ", 1)[0]
+                    else:
+                        self.modal_kb_keys = self.modal_kb_keys[:-1]
                 elif self.modal_kb_field == 1:
-                    self.modal_kb_action = self.modal_kb_action[:-1]
-                else:
+                    if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program":
+                        self.modal_kb_app_search = self.modal_kb_app_search[:-1]
+                        self.modal_kb_app_idx = 0
+                        self.modal_kb_app_scroll = 0
+                    else:
+                        self.modal_kb_action = self.modal_kb_action[:-1]
+                elif self.modal_kb_field == 2:
+                    if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program":
+                        self.modal_kb_app_extra = self.modal_kb_app_extra[:-1]
+                    else:
+                        self.modal_kb_desc = self.modal_kb_desc[:-1]
+                elif self.modal_kb_field == 3:
                     self.modal_kb_desc = self.modal_kb_desc[:-1]
                 return
             try:
@@ -2784,10 +4164,33 @@ class MecaTUI:
                 for c in decoded:
                     if c.isprintable() and c not in ("\r", "\n", "\t"):
                         if self.modal_kb_field == 0:
-                            self.modal_kb_keys += c
+                            all_mods = ["SUPER", "CTRL", "ALT", "SHIFT"]
+                            clean_text = self.modal_kb_keys.replace("...", "").strip()
+                            if clean_text.endswith("+"):
+                                clean_text = clean_text[:-1].strip()
+                            norm = self._normalize_keybind_string(clean_text)
+                            parts = [p.strip().upper() for p in norm.split("+") if p.strip()]
+                            has_only_mods = parts and all(p in all_mods for p in parts)
+                            if has_only_mods and c.isalnum():
+                                self.modal_kb_keys = " + ".join(parts + [c.upper()])
+                            elif c in ("+", " ", ","):
+                                self.modal_kb_keys = (clean_text + " ") if clean_text else ""
+                            else:
+                                self.modal_kb_keys = (clean_text + " " if clean_text and not clean_text.endswith(" ") else clean_text) + c
                         elif self.modal_kb_field == 1:
-                            self.modal_kb_action += c
-                        else:
+                            if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program":
+                                self.modal_kb_app_search += c
+                                self.modal_kb_app_dropdown_open = True
+                                self.modal_kb_app_idx = 0
+                                self.modal_kb_app_scroll = 0
+                            else:
+                                self.modal_kb_action += c
+                        elif self.modal_kb_field == 2:
+                            if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program":
+                                self.modal_kb_app_extra += c
+                            else:
+                                self.modal_kb_desc += c
+                        elif self.modal_kb_field == 3:
                             self.modal_kb_desc += c
             except Exception:
                 pass
@@ -2810,26 +4213,29 @@ class MecaTUI:
                     return
                 if self.modal_input_kind == "launch":
                     filtered = self._get_filtered_autostart_apps()
-                    if ch == b"\x1b[A":  # Flecha Arriba
-                        if self.autostart_dropdown_open:
-                            self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
-                        else:
-                            self.autostart_dropdown_open = True
+                    if ch in (b"\x1b[A", b"k", b"K") and self.autostart_dropdown_open:  # Flecha Arriba / k
+                        self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
                         return
-                    if ch == b"\x1b[B":  # Flecha Abajo abre o navega el selector desplegable
+                    if ch in (b"\x1b[B", b"j", b"J"):  # Flecha Abajo / j abre o navega el selector desplegable
                         if not self.autostart_dropdown_open:
                             self.autostart_dropdown_open = True
                         elif filtered:
                             self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
                         return
+                    if ch in (b"\x1b[5~",) and self.autostart_dropdown_open:  # Page Up
+                        self.autostart_app_idx = max(0, self.autostart_app_idx - 5)
+                        return
+                    if ch in (b"\x1b[6~",) and self.autostart_dropdown_open and filtered:  # Page Down
+                        self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 5)
+                        return
                     if ch in (b"\r", b"\n") and self.autostart_dropdown_open:
                         self._select_autostart_dropdown_app(self.autostart_app_idx)
                         return
 
-            if ch in (b"\x1b[D", b"\x1b[Z"):
+            if ch in (b"\x1b[D", b"\x1b[Z", b"h", b"H"):
                 self.modal_selected_idx = max(0, self.modal_selected_idx - 1)
                 return
-            if ch == b"\x1b[C":
+            if ch in (b"\x1b[C", b"l", b"L"):
                 self.modal_selected_idx = min(1, self.modal_selected_idx + 1)
                 return
             if ch in (b"\r", b"\n"):
@@ -2863,10 +4269,10 @@ class MecaTUI:
                 self.modal_state = None
                 self.pending_section_idx = None
                 return
-            if ch in (b"\x1b[D", b"\x1b[Z"):  # Izquierda / Shift+Tab
+            if ch in (b"\x1b[D", b"\x1b[Z", b"h", b"H"):  # Izquierda / Shift+Tab / h
                 self.modal_selected_idx = max(0, self.modal_selected_idx - 1)
                 return
-            if ch in (b"\x1b[C", b"\t"):  # Derecha / Tab
+            if ch in (b"\x1b[C", b"\t", b"l", b"L"):  # Derecha / Tab / l
                 self.modal_selected_idx = min(max_idx, self.modal_selected_idx + 1)
                 return
             if ch in (b"\r", b"\n", b" "):
@@ -2875,18 +4281,32 @@ class MecaTUI:
             return
 
         # Salir o regresar con Esc / q
-        if ch == b"\x1b" and len(ch) == 1 and self.view_mode == "theme_creator":
-            self.view_mode = "main"
-            self.creator_is_editing = False
-            self.creator_editing_slug = ""
-            self.current_section_idx = self._prev_main_section_idx
-            self.selected_item_idx = 0
-            self.content_scroll_offset = 0
-            self.status_message = "Edicion de tema cancelada."
+        if ch == b"\x1b" and len(ch) == 1:
+            if self.view_mode == "theme_creator":
+                self.view_mode = "main"
+                self.creator_is_editing = False
+                self.creator_editing_slug = ""
+                self.current_section_idx = self._prev_main_section_idx
+                self.selected_item_idx = 0
+                self.content_scroll_offset = 0
+                self.status_message = "Edicion de tema cancelada."
+                return
+            if self.active_pane != "sidebar":
+                self.active_pane = "sidebar"
+                self.status_message = "Foco en el panel izquierdo (Barra lateral)."
+                return
+            self.running = False
             return
 
-        if ch in (b"q", b"Q", b"\x1b") and len(ch) == 1:
+        if ch in (b"q", b"Q") and len(ch) == 1:
             self.running = False
+            return
+
+        # Atajo dedicado para volver al panel izquierdo (barra lateral):
+        # 'b', 'B', Backspace (\x7f, \x08), Ctrl+Left (\x1b[1;5D), Alt+Left (\x1b[1;3D)
+        if ch in (b"b", b"B", b"\x7f", b"\x08", b"\x1b[1;5D", b"\x1b[1;3D"):
+            self.active_pane = "sidebar"
+            self.status_message = "Foco en el panel izquierdo (Barra lateral)."
             return
 
         # Eliminar entrada de autostart, atajo o tema personalizado con Supr / Delete (\x1b[3~) o 'x'
@@ -2929,6 +4349,11 @@ class MecaTUI:
                                 self.status_message = f"Atajo '{entry.get('title')}' {st} (Pulsa 'Aplicar')."
             return
 
+        # Menú contextual con tecla m / M o tecla Menú
+        if ch in (b"m", b"M", b"\x1b[29~") and not self.modal_state and not self.dropdown_open:
+            self._open_context_menu_for_current_selection()
+            return
+
         # Atajos rápidos físicos directos (a/s/g: Aplicar/Guardar, c: Cancelar, r: Restablecer)
         if ch in (b"a", b"A", b"s", b"S", b"g", b"G"):
             self.save_all()
@@ -2940,8 +4365,16 @@ class MecaTUI:
             self.reset_to_defaults()
             return
 
-        # Cambiar foco con Tab
-        if ch in (b"\t", b"\x1b[Z"):
+        # Atajos numéricos 1-9 directos en la barra lateral
+        if self.active_pane == "sidebar" and ch in (b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9"):
+            target_s = int(ch) - 1
+            active_sections = self._get_active_sections()
+            if 0 <= target_s < len(active_sections):
+                self._request_section_change(target_s, focus_content=False)
+            return
+
+        # Cambiar foco con Tab (avance) y Shift+Tab (retroceso)
+        if ch == b"\t":
             if self.active_pane == "sidebar":
                 self.active_pane = "content"
             elif self.active_pane == "content":
@@ -2952,18 +4385,82 @@ class MecaTUI:
                 self.active_pane = "sidebar"
             return
 
-        # Navegación izquierda/derecha
-        if ch == b"\x1b[D":  # Flecha Izquierda
-            if self.active_pane == "buttons":
-                min_btn = 1 if self.view_mode == "theme_creator" else 0
-                self.selected_button_idx = max(min_btn, self.selected_button_idx - 1)
-            elif self.active_pane == "content":
-                self._adjust_current_item(delta=-1)
+        if ch == b"\x1b[Z":  # Shift+Tab: ciclo inverso
+            if self.active_pane == "sidebar":
+                self.active_pane = "buttons"
+                if self.view_mode == "theme_creator" and self.selected_button_idx == 0:
+                    self.selected_button_idx = 2
+            elif self.active_pane == "buttons":
+                self.active_pane = "content"
             else:
                 self.active_pane = "sidebar"
             return
 
-        if ch == b"\x1b[C":  # Flecha Derecha
+        # Page Up (\x1b[5~) y Page Down (\x1b[6~)
+        if ch == b"\x1b[5~":  # Page Up
+            if self.active_pane == "sidebar":
+                self._request_section_change(max(0, self.current_section_idx - 5), focus_content=False)
+            elif self.active_pane == "content":
+                self._move_content_selection(-5)
+            return
+
+        if ch == b"\x1b[6~":  # Page Down
+            if self.active_pane == "sidebar":
+                active_sections = self._get_active_sections()
+                self._request_section_change(min(len(active_sections) - 1, self.current_section_idx + 5), focus_content=False)
+            elif self.active_pane == "content":
+                self._move_content_selection(5)
+            return
+
+        # Home (\x1b[H / \x1b[1~) y End (\x1b[F / \x1b[4~)
+        if ch in (b"\x1b[H", b"\x1b[1~"):
+            if self.active_pane == "sidebar":
+                self._request_section_change(0, focus_content=False)
+            elif self.active_pane == "content":
+                self.selected_item_idx = 0
+            return
+
+        if ch in (b"\x1b[F", b"\x1b[4~"):
+            if self.active_pane == "sidebar":
+                active_sections = self._get_active_sections()
+                self._request_section_change(len(active_sections) - 1, focus_content=False)
+            elif self.active_pane == "content":
+                active_sections = self._get_active_sections()
+                sec_id = active_sections[self.current_section_idx][1]
+                items = self.section_items.get(sec_id, [])
+                if items:
+                    self.selected_item_idx = len(items) - 1
+            return
+
+        # Navegación izquierda (Flecha Izquierda / h)
+        if ch in (b"\x1b[D", b"h"):
+            if self.active_pane == "buttons":
+                min_btn = 1 if self.view_mode == "theme_creator" else 0
+                if ch == b"h" or self.selected_button_idx == min_btn:
+                    self.active_pane = "sidebar"
+                else:
+                    self.selected_button_idx = max(min_btn, self.selected_button_idx - 1)
+            elif self.active_pane == "content":
+                if ch == b"h":
+                    self.active_pane = "sidebar"
+                else:
+                    active_sections = self._get_active_sections()
+                    sec_id = active_sections[self.current_section_idx][1]
+                    items = self.section_items.get(sec_id, [])
+                    if items and 0 <= self.selected_item_idx < len(items):
+                        item = items[self.selected_item_idx]
+                        if item.item_type in ("stepper", "slider", "select"):
+                            self._adjust_current_item(delta=-1)
+                        else:
+                            self.active_pane = "sidebar"
+                    else:
+                        self.active_pane = "sidebar"
+            else:
+                self.active_pane = "sidebar"
+            return
+
+        # Navegación derecha (Flecha Derecha / l)
+        if ch in (b"\x1b[C", b"l"):
             if self.active_pane == "buttons":
                 self.selected_button_idx = min(2, self.selected_button_idx + 1)
             elif self.active_pane == "content":
@@ -2972,8 +4469,19 @@ class MecaTUI:
                 self.active_pane = "content"
             return
 
-        # Navegación vertical arriba/abajo
-        if ch == b"\x1b[A":  # Flecha Arriba
+        # Ajuste de valores con + / - / [ / ]
+        if ch in (b"+", b"="):
+            if self.active_pane == "content":
+                self._adjust_current_item(delta=1)
+            return
+
+        if ch in (b"-", b"_"):
+            if self.active_pane == "content":
+                self._adjust_current_item(delta=-1)
+            return
+
+        # Navegación vertical arriba (Flecha Arriba / k)
+        if ch in (b"\x1b[A", b"k"):
             if self.active_pane == "buttons":
                 self.active_pane = "content"
             elif self.active_pane == "sidebar":
@@ -2982,15 +4490,60 @@ class MecaTUI:
                 self._move_content_selection(-1)
             return
 
-        if ch == b"\x1b[B":  # Flecha Abajo
+        # Navegación vertical abajo (Flecha Abajo / j)
+        if ch in (b"\x1b[B", b"j"):
             if self.active_pane == "sidebar":
                 self._request_section_change(self.current_section_idx + 1, focus_content=False)
             elif self.active_pane == "content":
                 self._move_content_selection(1)
             return
 
-        # Enter o Espacio para activar/conmutar/abrir desplegable
-        if ch in (b"\r", b"\n", b" "):
+        # Espacio para conmutar directamente (toggle / activar atajo / abrir dropdown)
+        if ch == b" ":
+            if self.active_pane == "sidebar":
+                self.active_pane = "content"
+            elif self.active_pane == "buttons":
+                if self.selected_button_idx == 0 and self.view_mode != "theme_creator":
+                    self.reset_to_defaults()
+                elif self.selected_button_idx == 1:
+                    self.cancel_changes()
+                elif self.selected_button_idx == 2:
+                    self.save_all()
+            else:
+                # Conmutar atajo o autostart directamente sin necesidad de abrir modal
+                active_sections = self._get_active_sections()
+                sec_id = active_sections[self.current_section_idx][1]
+                items = self.section_items.get(sec_id, [])
+                if items and 0 <= self.selected_item_idx < len(items):
+                    item = items[self.selected_item_idx]
+                    if item.key.startswith("keybind:item:"):
+                        kb_idx = int(item.key.split(":")[-1])
+                        if 0 <= kb_idx < len(self.keybind_items):
+                            entry = self.keybind_items[kb_idx]
+                            cur_en = bool(entry.get("enabled", True))
+                            entry["enabled"] = not cur_en
+                            self._sync_keybinds_into_settings()
+                            self.config_sync.save_keybinds(self.keybind_items)
+                            self.saved_keybinds = [dict(x) for x in self.keybind_items]
+                            self.section_items["keybinds"] = self._build_keybinds_section_items()
+                            st = "activado" if entry["enabled"] else "desactivado"
+                            self.status_message = f"✓ Atajo '{entry.get('title')}' {st}."
+                            return
+                    elif item.key.startswith("autostart:item:"):
+                        as_idx = int(item.key.split(":")[-1])
+                        if 0 <= as_idx < len(self.autostart_items):
+                            cur_en = bool(self.autostart_items[as_idx].get("enabled", True))
+                            self.autostart_items[as_idx]["enabled"] = not cur_en
+                            self._sync_autostart_into_settings()
+                            self.section_items["autostart"] = self._build_autostart_section_items()
+                            st = "activada" if not cur_en else "desactivada"
+                            self.status_message = f"Entrada autostart {st} (Pulsa Aplicar)."
+                            return
+                self._activate_current_item()
+            return
+
+        # Enter para activar/abrir/confirmar
+        if ch in (b"\r", b"\n"):
             if self.active_pane == "sidebar":
                 self.active_pane = "content"
             elif self.active_pane == "buttons":
@@ -3098,6 +4651,29 @@ class MecaTUI:
                 m_ymin, m_ymax = self._modal_button_row_range
                 self.hover_modal_btn_idx = None
                 self.hover_autostart_app_idx = None
+                if self.modal_state in ("edit_keybind", "add_keybind"):
+                    self.hover_kb_mod = None
+                    self.hover_kb_rec = False
+                    self.hover_kb_tab = None
+                    self.hover_kb_app_idx = None
+                    if self.modal_state == "add_keybind":
+                        for tab_name, (ty, tx1, tx2) in self._kb_tab_click_ranges.items():
+                            if y == ty and tx1 <= x <= tx2:
+                                self.hover_kb_tab = tab_name
+                                return
+                        if getattr(self, "modal_kb_tab", "program") == "program" and self.modal_kb_app_dropdown_open:
+                            lx_min, lx_max = self._kb_app_list_x_range
+                            if y in self._kb_app_list_click_map and lx_min <= x <= lx_max:
+                                self.hover_kb_app_idx = self._kb_app_list_click_map[y]
+                                return
+                    for mod_name, (my, mx1, mx2) in self._kb_mod_chips.items():
+                        if y == my and mx1 <= x <= mx2:
+                            self.hover_kb_mod = mod_name
+                            return
+                    ry, rx1, rx2 = self._kb_rec_btn_range
+                    if y == ry and rx1 <= x <= rx2:
+                        self.hover_kb_rec = True
+                        return
                 if self.modal_state == "input_autostart" and self.modal_input_kind == "launch" and self.autostart_dropdown_open:
                     lx_min, lx_max = self._autostart_list_x_range
                     if y in self._autostart_list_click_map and lx_min <= x <= lx_max:
@@ -3111,21 +4687,71 @@ class MecaTUI:
                             return
                 return
 
-            if act == b"M" and btn in (64, 65) and self.modal_state == "input_autostart":
-                if self.modal_input_kind == "launch" and self.autostart_dropdown_open:
+            if act == b"M" and btn in (64, 65):
+                if self.modal_state == "add_keybind" and getattr(self, "modal_kb_tab", "program") == "program" and self.modal_kb_app_dropdown_open:
+                    filtered = self._get_filtered_kb_apps()
+                    if filtered:
+                        if btn == 64:
+                            self.modal_kb_app_idx = max(0, self.modal_kb_app_idx - 1)
+                        else:
+                            self.modal_kb_app_idx = min(len(filtered) - 1, self.modal_kb_app_idx + 1)
+                    return
+                if self.modal_state == "input_autostart" and self.modal_input_kind == "launch" and self.autostart_dropdown_open:
                     filtered = self._get_filtered_autostart_apps()
                     if filtered:
                         if btn == 64:
                             self.autostart_app_idx = max(0, self.autostart_app_idx - 1)
                         else:
                             self.autostart_app_idx = min(len(filtered) - 1, self.autostart_app_idx + 1)
+                    return
                 return
 
             if act == b"M" and btn == 0:
                 if self.modal_state in ("edit_keybind", "add_keybind"):
+                    if self.modal_state == "add_keybind":
+                        for tab_name, (ty, tx1, tx2) in self._kb_tab_click_ranges.items():
+                            if y == ty and tx1 <= x <= tx2:
+                                self.modal_kb_tab = tab_name
+                                self.modal_kb_app_dropdown_open = False
+                                if self.modal_kb_field > self._get_keybind_max_field():
+                                    self.modal_kb_field = 0
+                                return
+                        if getattr(self, "modal_kb_tab", "program") == "program":
+                            ddy1, ddy2, ddx1, ddx2 = self._kb_app_dropdown_btn_range
+                            if ddy1 <= y <= ddy2 and ddx1 <= x <= ddx2:
+                                self.modal_kb_app_dropdown_open = not self.modal_kb_app_dropdown_open
+                                self.modal_kb_field = 1
+                                return
+                            if self.modal_kb_app_dropdown_open:
+                                lx_min, lx_max = self._kb_app_list_x_range
+                                if y in self._kb_app_list_click_map and lx_min <= x <= lx_max:
+                                    clicked_idx = self._kb_app_list_click_map[y]
+                                    self._select_kb_dropdown_app(clicked_idx)
+                                    return
+                    for mod_name, (my, mx1, mx2) in self._kb_mod_chips.items():
+                        if y == my and mx1 <= x <= mx2:
+                            self._toggle_kb_modifier(mod_name)
+                            return
+                    ry, rx1, rx2 = self._kb_rec_btn_range
+                    if y == ry and rx1 <= x <= rx2:
+                        self.modal_kb_field = 0
+                        if getattr(self, "modal_kb_recording", False):
+                            self._stop_keybind_recording()
+                        else:
+                            self._start_keybind_recording()
+                        return
                     for f_idx, (fy1, fy2, fx1, fx2) in self._kb_field_click_ranges.items():
                         if fy1 <= y <= fy2 and fx1 <= x <= fx2:
                             self.modal_kb_field = f_idx
+                            if f_idx != 1:
+                                self.modal_kb_app_dropdown_open = False
+                            if f_idx == 0:
+                                if getattr(self, "modal_kb_recording", False):
+                                    self._stop_keybind_recording()
+                                else:
+                                    self._start_keybind_recording()
+                            elif getattr(self, "modal_kb_recording", False):
+                                self._stop_keybind_recording()
                             return
                 ky, kxmin, kxmax = self._modal_kind_click_range
                 if y == ky and kxmin <= x <= kxmax:
@@ -3457,11 +5083,38 @@ class MecaTUI:
             return
 
         if key == "input:kb_grp_toggle":
-            self.settings["kb_grp_toggle"] = "" if str(val) == "none" else str(val)
+            self.settings["kb_grp_toggle"] = "Ninguno" if str(val) in ("none", "Ninguno", "") else str(val)
             return
 
         if key == "input:compose_key":
-            self.settings["compose_key"] = "ralt" if "Alt Gr" in str(val) else "caps"
+            val_str = str(val)
+            if "Pulsar tecla" in val_str:
+                self._start_compose_recording()
+                return
+            if "Desactivada" in val_str or "none" in val_str:
+                self.settings["compose_key"] = "none"
+            elif "Bloq May" in val_str or "Caps" in val_str:
+                self.settings["compose_key"] = "caps"
+            elif "Menú" in val_str or "Menu" in val_str:
+                self.settings["compose_key"] = "menu"
+            elif "Derecho" in val_str or "rwin" in val_str:
+                self.settings["compose_key"] = "rwin"
+            elif "Izquierdo" in val_str or "lwin" in val_str:
+                self.settings["compose_key"] = "lwin"
+            elif "Impr" in val_str or "PrtSc" in val_str:
+                self.settings["compose_key"] = "prsc"
+            elif "Insert" in val_str:
+                self.settings["compose_key"] = "ins"
+            elif "Pausa" in val_str or "Pause" in val_str:
+                self.settings["compose_key"] = "paus"
+            elif "Alt Gr" in val_str:
+                self.settings["compose_key"] = "ralt"
+            else:
+                self.settings["compose_key"] = "none"
+
+            self.saved_settings["compose_key"] = self.settings["compose_key"]
+            self.config_sync.fix_caps_lock(compose_key=self.settings["compose_key"])
+            self.status_message = "✓ Tecla Compose actualizada."
             return
 
         if key == "cursor:theme":
@@ -3480,7 +5133,8 @@ class MecaTUI:
             return
 
         if key == "display:transform":
-            first_ch = str(val).strip()[0]
+            s_val = str(val).strip()
+            first_ch = s_val[0] if s_val else "0"
             self.settings["monitor_transform"] = int(first_ch) if first_ch.isdigit() else 0
             return
 
@@ -3489,7 +5143,8 @@ class MecaTUI:
             return
 
         if key == "display:vrr":
-            first_ch = str(val).strip()[0]
+            s_val = str(val).strip()
+            first_ch = s_val[0] if s_val else "0"
             self.settings["monitor_vrr"] = int(first_ch) if first_ch.isdigit() else 0
             return
 
@@ -3522,11 +5177,21 @@ class MecaTUI:
         elif action_key == "action:add_keybind":
             self.modal_state = "add_keybind"
             self.modal_kb_idx = -1
+            self.modal_kb_tab = "program"
             self.modal_kb_field = 0
             self.modal_kb_keys = "SUPER + "
-            self.modal_kb_action = "uwsm-app -- "
+            self.modal_kb_action = ""
             self.modal_kb_desc = "Nuevo atajo"
+            self.modal_kb_app_extra = ""
+            self.modal_kb_app_selected_cmd = ""
+            self.modal_kb_app_selected_name = ""
+            self.modal_kb_app_idx = 0
+            self.modal_kb_app_scroll = 0
+            self.modal_kb_app_search = ""
+            self.modal_kb_app_dropdown_open = False
             self.modal_selected_idx = 1
+            if not self.installed_apps:
+                self.installed_apps = self.config_sync.list_installed_applications()
             return
 
         elif action_key.startswith("keybind:item:"):
@@ -3615,11 +5280,19 @@ class MecaTUI:
                 self.status_message = "No se encontró 'omarchy-restart-shell'."
             return
 
+        elif action_key == "action:record_compose":
+            self._start_compose_recording()
+            return
+
         elif action_key == "action:fix_caps":
-            use_ralt = (self.settings.get("compose_key", "ralt") == "ralt")
-            self.config_sync.fix_caps_lock(use_ralt=use_ralt)
-            self.saved_settings["compose_key"] = self.settings.get("compose_key", "ralt")
-            self.status_message = "✓ Tecla Bloq Mayus guardada."
+            self.settings["compose_key"] = "none"
+            self.settings["kb_grp_toggle"] = "Ninguno"
+            self.config_sync.fix_caps_lock(compose_key="none")
+            self.config_sync.save_gui_settings(self.settings, apply_live=True)
+            self.saved_settings["compose_key"] = "none"
+            self.saved_settings["kb_grp_toggle"] = "Ninguno"
+            self.status_message = "✓ Tecla Bloq Mayus y Alt Gr (@) restauradas."
+            return
 
         elif action_key == "action:save_monitor":
             m_name = self.monitors[0].get("name", "") if self.monitors else ""
@@ -3743,7 +5416,7 @@ class MecaTUI:
             self.config_sync.save_bar_settings(self.settings, reload_shell=True)
 
         if self.settings.get("compose_key") != self.saved_settings.get("compose_key"):
-            self.config_sync.fix_caps_lock(use_ralt=(self.settings.get("compose_key", "ralt") == "ralt"))
+            self.config_sync.fix_caps_lock(compose_key=str(self.settings.get("compose_key", "none")))
 
         if self.settings.get("omarchy_theme_name") != self.saved_settings.get("omarchy_theme_name"):
             chosen_theme = str(self.settings.get("omarchy_theme_name", self.theme_engine.current_theme))

@@ -100,9 +100,21 @@ def main() -> None:
         print("\033[32m¡Preparación completada con éxito!\033[0m")
         return
 
-    # Iniciar la interfaz TUI por defecto
-    app = MecaTUI()
-    app.run()
+    # Iniciar la interfaz TUI por defecto con pantalla de carga animada
+    from meca.ui.loader import StartupLoader
+
+    loader = StartupLoader()
+    loader.start()
+    try:
+        app = MecaTUI(was_tiled=loader.was_tiled)
+        loader.stop()
+        app.run()
+    except KeyboardInterrupt:
+        loader.cleanup()
+        sys.exit(0)
+    except Exception:
+        loader.cleanup()
+        raise
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from meca.core.hypr_ipc import HyprIPC
 
 
@@ -263,8 +263,8 @@ class ConfigSync:
             "kb_layout": "es",
             "kb_variant": "",
             "kb_model": "pc105",
-            "kb_grp_toggle": "Alt Izq + Alt Der",
-            "compose_key": "ralt",
+            "kb_grp_toggle": "Ninguno",
+            "compose_key": "none",
             "repeat_rate": 40,
             "repeat_delay": 250,
             "numlock": True,
@@ -474,10 +474,15 @@ class ConfigSync:
         # 6. Verificar compose_key y cambio de grupo en input.lua o hyprctl
         kb_opts = HyprIPC.get_option("input:kb_options")
         if isinstance(kb_opts, str):
-            if "compose:caps" in kb_opts:
-                settings["compose_key"] = "caps"
-            elif "compose:ralt" in kb_opts:
-                settings["compose_key"] = "ralt"
+            compose_found = False
+            for c_name in ("caps", "menu", "rwin", "lwin", "prsc", "ins", "paus", "sclk", "rctrl", "lctrl", "ralt"):
+                if f"compose:{c_name}" in kb_opts:
+                    settings["compose_key"] = c_name
+                    compose_found = True
+                    break
+            if not compose_found:
+                settings["compose_key"] = "none"
+
             if "grp:alt_shift_toggle" in kb_opts:
                 settings["kb_grp_toggle"] = "Alt + Shift"
             elif "grp:win_space_toggle" in kb_opts:
@@ -486,6 +491,11 @@ class ConfigSync:
                 settings["kb_grp_toggle"] = "Ctrl + Shift"
             elif "grp:alts_toggle" in kb_opts:
                 settings["kb_grp_toggle"] = "Alt Izq + Alt Der"
+            else:
+                settings["kb_grp_toggle"] = "Ninguno"
+        else:
+            settings.setdefault("compose_key", "none")
+            settings.setdefault("kb_grp_toggle", "Ninguno")
 
         # 6b. Detectar tema del cursor actual desde entorno o gsettings
         env_cursor = os.environ.get("XCURSOR_THEME") or os.environ.get("HYPRCURSOR_THEME")
@@ -759,11 +769,83 @@ class ConfigSync:
         return binds
 
     @staticmethod
-    def _display_key_to_lua(keys_str: str) -> str:
-        """Convierte teclas de visualización (ej. SUPER + 1 o SUPER + COMMA) al formato Lua de Hyprland."""
-        parts = [p.strip() for p in keys_str.split("+") if p.strip()]
+    def normalize_keybind_string(raw: str) -> str:
+        """
+        Normaliza combinaciones de teclas al formato canónico (ej. SUPER + CTRL + M, PRINT, etc.).
+        Soporta múltiples alias, teclas en español (Impr pant, Intro, Supr) y orden canónico.
+        """
+        if not raw or not str(raw).strip():
+            return ""
+
+        s = str(raw).strip()
+
+        # Detectar teclas compuestas en español o inglés antes de separar
+        s = re.sub(r"(?i)\b(impr\s*pant(?:alla)?|imprpant|prt\s*sc?r?n?|print\s*screen)\b", "PRINT", s)
+        s = re.sub(r"(?i)\b(bloq\s*mayus|caps\s*lock)\b", "CAPS_LOCK", s)
+        s = re.sub(r"(?i)\b(re\s*pag|page\s*up)\b", "PAGE_UP", s)
+        s = re.sub(r"(?i)\b(av\s*pag|page\s*down)\b", "PAGE_DOWN", s)
+
+        # Separar por '+' o por espacios si no hay '+'
+        if "+" in s:
+            raw_parts = [p.strip() for p in s.split("+") if p.strip()]
+        else:
+            raw_parts = [p.strip() for p in s.split() if p.strip()]
+
+        mod_map = {
+            "SUPER": "SUPER", "WIN": "SUPER", "WINDOWS": "SUPER", "MOD4": "SUPER", "SUPER_L": "SUPER", "SUPER_R": "SUPER",
+            "CTRL": "CTRL", "CONTROL": "CTRL", "CTRL_L": "CTRL", "CTRL_R": "CTRL",
+            "ALT": "ALT", "MOD1": "ALT", "ALT_L": "ALT", "ALT_R": "ALT", "META": "ALT",
+            "SHIFT": "SHIFT", "MAYUS": "SHIFT", "SHIFT_L": "SHIFT", "SHIFT_R": "SHIFT",
+        }
+
+        key_map = {
+            "PRINT": "PRINT", "PRINTSCREEN": "PRINT", "PRTSC": "PRINT", "PRTSCR": "PRINT",
+            "ENTER": "RETURN", "RETURN": "RETURN", "RET": "RETURN", "INTRO": "RETURN",
+            "ESC": "ESCAPE", "ESCAPE": "ESCAPE",
+            "SPACE": "SPACE", "ESPACIO": "SPACE",
+            "BACKSPACE": "BACKSPACE", "BORRAR": "BACKSPACE", "RETROCESO": "BACKSPACE",
+            "TAB": "TAB", "TABULADOR": "TAB",
+            "DEL": "DELETE", "DELETE": "DELETE", "SUPR": "DELETE",
+            "INS": "INSERT", "INSERT": "INSERT",
+            "UP": "UP", "ARRIBA": "UP",
+            "DOWN": "DOWN", "ABAJO": "DOWN",
+            "LEFT": "LEFT", "IZQUIERDA": "LEFT",
+            "RIGHT": "RIGHT", "DERECHA": "RIGHT",
+            "COMMA": "comma", "COMA": "comma",
+            "PERIOD": "period", "PUNTO": "period",
+            "SLASH": "slash", "BARRA": "slash",
+        }
+
+        mods = []
+        keys = []
+
+        for p in raw_parts:
+            up = p.upper()
+            if up in mod_map:
+                c_mod = mod_map[up]
+                if c_mod not in mods:
+                    mods.append(c_mod)
+            else:
+                if up in key_map:
+                    keys.append(key_map[up])
+                elif up.startswith("CODE:"):
+                    keys.append(p.lower())
+                elif len(p) == 1:
+                    keys.append(p.upper())
+                else:
+                    keys.append(key_map.get(up, p.upper()))
+
+        # Orden canónico Hyprland: SUPER -> CTRL -> ALT -> SHIFT
+        ordered_mods = [m for m in ("SUPER", "CTRL", "ALT", "SHIFT") if m in mods]
+        return " + ".join(ordered_mods + keys)
+
+    @classmethod
+    def _display_key_to_lua(cls, keys_str: str) -> str:
+        """Convierte teclas de visualización al formato Lua de Hyprland con soporte completo de modifiers y PRINT."""
+        norm = cls.normalize_keybind_string(keys_str)
+        parts = [p.strip() for p in norm.split("+") if p.strip()]
         if not parts:
-            return keys_str.strip()
+            return norm
         last = parts[-1]
         if last.isdigit() and len(last) == 1:
             num = 10 if last == "0" else int(last)
@@ -836,6 +918,7 @@ class ConfigSync:
         ]
         try:
             self.bindings_file.write_text("\n".join(header + lua_lines) + "\n", encoding="utf-8")
+            HyprIPC.reload()
             return True
         except Exception:
             return False
@@ -881,7 +964,8 @@ class ConfigSync:
             "cursor_theme": str(settings.get("cursor_theme", "default")),
             "cursor_size": int(settings.get("cursor_size", 24)),
             "kb_model": str(settings.get("kb_model", "pc105")),
-            "kb_grp_toggle": str(settings.get("kb_grp_toggle", "Alt Izq + Alt Der")),
+            "kb_grp_toggle": str(settings.get("kb_grp_toggle", "Ninguno")),
+            "compose_key": str(settings.get("compose_key", "none")),
             "workspace_swipe": bool(settings.get("workspace_swipe", False)),
             "workspace_count": int(settings.get("workspace_count", 5)),
             "workspace_layout": str(settings.get("workspace_layout", "dwindle")),
@@ -924,8 +1008,17 @@ class ConfigSync:
         ay = int(aspect_parts[1]) if len(aspect_parts) >= 2 and aspect_parts[1].isdigit() else 0
 
         # Opciones de teclado (Compose + Cambio de distribución)
-        compose_opt = "compose:ralt" if settings.get("compose_key", "ralt") == "ralt" else "compose:caps"
-        grp_label = str(settings.get("kb_grp_toggle", "Alt Izq + Alt Der"))
+        compose_val = str(settings.get("compose_key", "none")).lower().strip()
+        if compose_val in ("none", "disabled", "desactivada", "ninguna", ""):
+            compose_opt = ""
+        elif compose_val in ("caps", "menu", "rwin", "lwin", "prsc", "ins", "paus", "sclk", "rctrl", "lctrl", "ralt"):
+            compose_opt = f"compose:{compose_val}"
+        elif compose_val.startswith("compose:"):
+            compose_opt = compose_val
+        else:
+            compose_opt = ""
+
+        grp_label = str(settings.get("kb_grp_toggle", "Ninguno")).strip()
         grp_map = {
             "Alt Izq + Alt Der": "grp:alts_toggle",
             "Alt + Shift": "grp:alt_shift_toggle",
@@ -933,8 +1026,10 @@ class ConfigSync:
             "Ctrl + Shift": "grp:ctrl_shift_toggle",
             "Ninguno": "",
         }
-        grp_opt = grp_map.get(grp_label, "grp:alts_toggle")
-        opt_parts = [compose_opt, "shift:both_capslock_cancel"]
+        grp_opt = grp_map.get(grp_label, "")
+        opt_parts = ["shift:both_capslock_cancel"]
+        if compose_opt:
+            opt_parts.insert(0, compose_opt)
         if grp_opt:
             opt_parts.append(grp_opt)
         kb_options_str = ",".join(opt_parts)
@@ -1129,10 +1224,20 @@ hl.animation({{ leaf = "specialWorkspace", enabled = true, speed = {3.0 * spd_mu
 """
         try:
             self.gui_file.write_text(lua_content, encoding="utf-8")
+            if self.input_file.exists():
+                try:
+                    in_txt = self.input_file.read_text(encoding="utf-8")
+                    if re.search(r'kb_options\s*=', in_txt):
+                        in_txt = re.sub(r'kb_options\s*=\s*"[^"]*"', f'kb_options = "{kb_options_str}"', in_txt)
+                        self.input_file.write_text(in_txt, encoding="utf-8")
+                except Exception:
+                    pass
+
             self._update_hyprland_lua_binding_flags(settings)
             self.save_bar_settings(settings, reload_shell=apply_live)
 
             if apply_live:
+                HyprIPC.set_keyword("input:kb_options", kb_options_str)
                 subprocess.run(
                     ["hyprctl", "setcursor", c_theme, str(c_size)],
                     stdout=subprocess.DEVNULL,
@@ -1300,27 +1405,52 @@ hl.animation({{ leaf = "specialWorkspace", enabled = true, speed = {3.0 * spd_mu
         except Exception:
             return False
 
-    def fix_caps_lock(self, use_ralt: bool = True) -> bool:
+    def fix_caps_lock(self, compose_key: str = "none", use_ralt: Optional[bool] = None) -> bool:
         """
-        Corrige la tecla Bloq Mayús en Hyprland.
-        En Omarchy, kb_options por defecto incluye compose:caps.
-        Cambiándolo a compose:ralt (Alt Gr), Bloq Mayús recupera su uso normal.
+        Restaura el funcionamiento normal de Bloq Mayús y Alt Gr (@) en Hyprland.
+        Si compose_key es 'none', desactiva cualquier tecla Compose permitiendo que
+        Alt Gr escriba @, #, etc., y Bloq Mayús funcione normalmente.
+        Actualiza tanto input.lua como hyprland-gui.lua y aplica los cambios en vivo.
         """
-        compose_opt = "compose:ralt" if use_ralt else "compose:caps"
-        HyprIPC.set_keyword("input:kb_options", f"{compose_opt},shift:both_capslock_cancel")
+        if use_ralt is not None:
+            compose_key = "ralt" if use_ralt else "caps"
+        c_val = str(compose_key).lower().strip()
+        if c_val in ("none", "disabled", "desactivada", "ninguna", ""):
+            compose_opt = ""
+        elif c_val in ("caps", "menu", "rwin", "lwin", "prsc", "ins", "paus", "sclk", "rctrl", "lctrl", "ralt"):
+            compose_opt = f"compose:{c_val}"
+        elif c_val.startswith("compose:"):
+            compose_opt = c_val
+        else:
+            compose_opt = ""
+
+        opt_parts = ["shift:both_capslock_cancel"]
+        if compose_opt:
+            opt_parts.insert(0, compose_opt)
+        kb_opts = ",".join(opt_parts)
+
+        HyprIPC.set_keyword("input:kb_options", kb_opts)
 
         if self.input_file.exists():
-            content = self.input_file.read_text(encoding="utf-8")
-            if "compose:caps" in content or "compose:ralt" in content:
-                content = content.replace("compose:caps", compose_opt).replace("compose:ralt", compose_opt)
-            else:
-                content += f'\n-- Meca: Corrección de tecla Bloq Mayús\nhl.config({{\n  input = {{\n    kb_options = "{compose_opt}",\n  }},\n}})\n'
-            self.input_file.write_text(content, encoding="utf-8")
-        else:
-            self.input_file.write_text(
-                f'-- Configuración de entrada gestionada por Meca\nhl.config({{\n  input = {{\n    kb_options = "{compose_opt}",\n  }},\n}})\n',
-                encoding="utf-8",
-            )
+            try:
+                content = self.input_file.read_text(encoding="utf-8")
+                if re.search(r'kb_options\s*=', content):
+                    content = re.sub(r'kb_options\s*=\s*"[^"]*"', f'kb_options = "{kb_opts}"', content)
+                else:
+                    content += f'\n-- Meca: Configuración de teclado\nhl.config({{\n  input = {{\n    kb_options = "{kb_opts}",\n  }},\n}})\n'
+                self.input_file.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
+        if self.gui_file.exists():
+            try:
+                content = self.gui_file.read_text(encoding="utf-8")
+                if re.search(r'kb_options\s*=', content):
+                    content = re.sub(r'kb_options\s*=\s*"[^"]*"', f'kb_options = "{kb_opts}"', content)
+                    self.gui_file.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
         return True
 
     def save_monitor_config(

@@ -28,9 +28,45 @@ if [[ -w "/usr/local/bin" ]]; then
     echo "  -> Enlazado también en /usr/local/bin/meca"
 fi
 
-echo "[2/5] Registrando entrada de escritorio (.desktop) ..."
+echo "[2/5] Registrando entrada de escritorio (.desktop) y menú de Omarchy ..."
 mkdir -p "$HOME/.local/share/applications"
 cp -f "$SCRIPT_DIR/meca.desktop" "$HOME/.local/share/applications/meca.desktop"
+
+# Registrar Meca en Setup -> Config del menú de Omarchy
+MENU_EXT="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+mkdir -p "$(dirname "$MENU_EXT")"
+if [[ ! -f "$MENU_EXT" ]]; then
+    cat <<'EOF' > "$MENU_EXT"
+{
+  "setup.config.meca": {
+    "icon": "",
+    "label": "Meca",
+    "action": "omarchy-launch-tui --app-id=org.omarchy.meca meca"
+  }
+}
+EOF
+elif ! grep -q '"setup.config.meca"' "$MENU_EXT"; then
+    python3 -c '
+import sys
+p = sys.argv[1]
+try:
+    with open(p, "r", encoding="utf-8") as f:
+        content = f.read()
+    if "setup.config.meca" not in content:
+        entry = "\n  \"setup.config.meca\": {\n    \"icon\": \"\ue615\",\n    \"label\": \"Meca\",\n    \"action\": \"omarchy-launch-tui --app-id=org.omarchy.meca meca\"\n  }\n"
+        if "}" in content:
+            idx = content.rfind("}")
+            new_content = content[:idx].rstrip()
+            if not new_content.endswith("{") and not new_content.endswith(","):
+                new_content += ","
+            new_content += entry + "}\n"
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(new_content)
+except Exception:
+    pass
+' "$MENU_EXT" 2>/dev/null || true
+fi
+command -v omarchy &>/dev/null && omarchy menu refresh &>/dev/null || true
 
 echo "[3/5] Instalando hook de actualización automática con 'omarchy update' ..."
 HOOK_DIR="$HOME/.config/omarchy/hooks/post-update.d"

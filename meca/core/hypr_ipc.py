@@ -107,6 +107,11 @@ class HyprIPC:
         return cls.get_active_window()
 
     @classmethod
+    def eval(cls, code: str) -> Optional[str]:
+        """Ejecuta código Lua en Hyprland mediante hyprctl eval."""
+        return cls.run_hyprctl(["eval", code])
+
+    @classmethod
     def ensure_floating_centered(cls, width: int = 680, height: int = 960) -> bool:
         """
         Convierte la ventana actual en una ventana flotante rectangular vertical (más altura que anchura)
@@ -137,9 +142,43 @@ class HyprIPC:
         addr = str(win.get("address", "")).strip()
         was_tiled = not bool(win.get("floating", False))
 
+        # 1. Intentar mediante parser Lua moderno de Hyprland
+        if addr:
+            lua_code = f"""
+local win = hl.get_window("address:{addr}")
+if win then
+  hl.dispatch(hl.dsp.window.tag({{ tag = "-floating-window", window = "address:{addr}" }}))
+  if not win.floating then
+    hl.dispatch(hl.dsp.window.float({{ window = "address:{addr}" }}))
+  end
+  hl.dispatch(hl.dsp.focus({{ window = "address:{addr}" }}))
+  hl.dispatch(hl.dsp.window.resize({{ x = {width}, y = {height}, relative = false, window = "address:{addr}" }}))
+  hl.dispatch(hl.dsp.window.center({{ window = "address:{addr}" }}))
+else
+  local act = hl.get_active_window()
+  if act and not act.floating then
+    hl.dispatch(hl.dsp.window.float())
+  end
+  hl.dispatch(hl.dsp.window.resize({{ x = {width}, y = {height}, relative = false }}))
+  hl.dispatch(hl.dsp.window.center())
+end
+"""
+        else:
+            lua_code = f"""
+local win = hl.get_active_window()
+if win and not win.floating then
+  hl.dispatch(hl.dsp.window.float())
+end
+hl.dispatch(hl.dsp.window.resize({{ x = {width}, y = {height}, relative = false }}))
+hl.dispatch(hl.dsp.window.center())
+"""
+        res = cls.eval(lua_code)
+        if res and "ok" in res.lower():
+            return was_tiled
+
+        # 2. Fallback para parser legacy
         cmds: List[str] = []
         if addr:
-            # Quitar etiqueta floating-window de Omarchy que fuerza 875x600 horizontal
             cmds.append(f"dispatch tagwindow -floating-window address:{addr}")
             if was_tiled:
                 cmds.append(f"dispatch setfloating address:{addr}")
@@ -162,8 +201,26 @@ class HyprIPC:
         win = cls.find_our_window()
         addr = str(win.get("address", "")).strip() if win else ""
         if addr:
+            lua_code = f"""
+local win = hl.get_window("address:{addr}")
+if win and win.floating then
+  hl.dispatch(hl.dsp.window.float({{ window = "address:{addr}" }}))
+end
+"""
+            res = cls.eval(lua_code)
+            if res and "ok" in res.lower():
+                return
             cls.run_hyprctl(["dispatch", "settiled", f"address:{addr}"])
         else:
+            lua_code = """
+local win = hl.get_active_window()
+if win and win.floating then
+  hl.dispatch(hl.dsp.window.float())
+end
+"""
+            res = cls.eval(lua_code)
+            if res and "ok" in res.lower():
+                return
             cls.run_hyprctl(["dispatch", "settiled"])
 
     @classmethod
@@ -184,6 +241,38 @@ class HyprIPC:
     @classmethod
     def set_keyword(cls, key: str, value: Any) -> bool:
         """Aplica un cambio de opción en vivo en Hyprland sin recargar sesión."""
+        # 1. Intentar mediante parser Lua moderno (Hyprland 0.50+)
+        if ":" in key:
+            parts = [p.replace("-", "_") for p in key.split(":")]
+            if isinstance(value, bool):
+                val_lua = "true" if value else "false"
+            elif isinstance(value, (int, float)):
+                val_lua = str(value)
+            else:
+                val_lua = json.dumps(str(value))
+            expr = val_lua
+            for p in reversed(parts):
+                expr = f"{{ {p} = {expr} }}"
+            res = cls.eval(f"hl.config({expr})")
+            if res and "ok" in res.lower():
+                return True
+        elif key == "monitor":
+            m_parts = [p.strip() for p in str(value).split(",")]
+            out_name = m_parts[0] if len(m_parts) > 0 else ""
+            mode_str = m_parts[1] if len(m_parts) > 1 else "preferred"
+            pos_str = m_parts[2] if len(m_parts) > 2 else "auto"
+            scale_val = m_parts[3] if len(m_parts) > 3 else "1"
+            trans_part = ""
+            if "transform" in m_parts:
+                t_idx = m_parts.index("transform")
+                if t_idx + 1 < len(m_parts):
+                    trans_part = f", transform = {m_parts[t_idx+1]}"
+            lua_mon = f'hl.monitor({{ output = "{out_name}", mode = "{mode_str}", position = "{pos_str}", scale = {scale_val}{trans_part} }})'
+            res = cls.eval(lua_mon)
+            if res and "ok" in res.lower():
+                return True
+
+        # 2. Fallback para parser legacy
         val_str = str(value)
         if isinstance(value, bool):
             val_str = "true" if value else "false"

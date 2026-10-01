@@ -4,6 +4,7 @@ Módulo de Gestión de Identidad Lizarbe, Fastfetch y Software Amigable para Oma
 
 from __future__ import annotations
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -34,6 +35,7 @@ class LizarbeManager:
         ff_dir = Path.home() / ".config" / "fastfetch"
         ff_dir.mkdir(parents=True, exist_ok=True)
         logo_file = ff_dir / "logo.txt"
+        cfg_file = ff_dir / "config.jsonc"
 
         if not logo_file.exists():
             # Buscar en el proyecto de temas si está disponible
@@ -52,6 +54,23 @@ class LizarbeManager:
 \033[0m""",
                     encoding="utf-8"
                 )
+
+        if not cfg_file.exists():
+            cfg_file.write_text(
+                '{\n  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",\n  "logo": {\n    "source": "~/.config/fastfetch/logo.txt"\n  }\n}\n',
+                encoding="utf-8"
+            )
+        else:
+            try:
+                content = cfg_file.read_text(encoding="utf-8", errors="ignore")
+                if "logo.txt" not in content:
+                    # Si no tiene logo.txt configurado, enlazarlo en la sección logo
+                    if '"logo":' in content:
+                        content = re.sub(r'("logo"\s*:\s*\{[^}]*?"source"\s*:\s*)"[^"]*"', r'\1"~/.config/fastfetch/logo.txt"', content)
+                    cfg_file.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
         return True
 
     @staticmethod
