@@ -324,6 +324,16 @@ class MecaTUI:
         self._autostart_list_click_map: Dict[int, int] = {}
         self._autostart_list_x_range: Tuple[int, int] = (0, 0)
 
+        # Estado del buscador global (spotlight/command palette)
+        self.search_open: bool = False
+        self.search_query: str = ""
+        self.search_results: List[Tuple[int, int, SectionItem]] = []  # (section_idx, item_idx, item)
+        self.search_selected_idx: int = 0
+        self.search_scroll_offset: int = 0
+        self.hover_search_idx: Optional[int] = None
+        self._search_click_map: Dict[int, int] = {}  # screen_row → result_idx
+        self._search_box_bounds: Tuple[int, int, int, int] = (0, 0, 0, 0)  # (y1, y2, x1, x2)
+
         # Mapeos de coordenadas para interacción con el ratón y estado hover (pasar el cursor)
         self._sidebar_click_map: Dict[int, int] = {}
         self._content_click_map: Dict[int, Dict[str, Any]] = {}
@@ -923,13 +933,13 @@ class MecaTUI:
         if self.view_mode == "theme_creator":
             keys_hint = " Esc/c: Cancelar │ b: Panel izq │ a: Guardar "
         else:
-            keys_hint = " Tab: Foco │ b/Esc: Panel izq │ m: Menú │ Espacio: Conmutar │ a: Aplicar │ q: Salir "
+            keys_hint = " /: Buscar │ Tab: Foco │ b: Panel izq │ m: Menú │ Espacio: Conmutar │ a: Aplicar │ q: Salir "
             if cols < 125:
-                keys_hint = " Tab: Foco │ b: Panel izq │ m: Menú │ a: Aplicar │ q: Salir "
+                keys_hint = " /: Buscar │ Tab: Foco │ b: Panel izq │ m: Menú │ a: Aplicar │ q: Salir "
             if cols < 95:
-                keys_hint = " b: Panel izq │ m: Menú │ a: Aplicar │ q: Salir "
+                keys_hint = " /:Buscar │ b: Panel izq │ m: Menú │ a: Aplicar │ q: Salir "
             if cols < 75:
-                keys_hint = " b:Izq │ a:Aplicar │ q:Salir "
+                keys_hint = " /:Buscar │ b:Izq │ a:Aplicar │ q:Salir "
         max_status_w = max(8, cols - len(keys_hint) - 1)
         status_txt = f" {self.status_message}"[:max_status_w]
         footer_space = max(0, cols - 1 - len(status_txt) - len(keys_hint))
@@ -943,6 +953,10 @@ class MecaTUI:
         # 5. Menú contextual de clic secundario (Right-Click Context Menu)
         if self.context_menu_open and not self.modal_state:
             buf.extend(self._render_context_menu_overlay(cols, rows))
+
+        # 5.5 Buscador Global
+        if getattr(self, "search_open", False) and not self.modal_state:
+            buf.extend(self._render_search_overlay(cols, rows))
 
         # 6. Ventana Modal (si está activa)
         if self.modal_state:
@@ -3008,6 +3022,145 @@ class MecaTUI:
             or (self.keybind_items != self.saved_keybinds)
         )
 
+    def _open_search(self) -> None:
+        """Abre el buscador global de configuraciones."""
+        self.search_open = True
+        self.search_query = ""
+        self.search_scroll_offset = 0
+        self.search_selected_idx = 0
+        self.status_message = "Buscador global: Escribe para buscar... (Esc para salir)"
+        self._perform_global_search()
+
+    def _perform_global_search(self) -> None:
+        """Filtra todos los items de todas las secciones principales (excluyendo CREATOR_SECTIONS y headers)."""
+        self.search_results.clear()
+        query = self.search_query.lower().strip()
+        
+        for sec_idx, sec_meta in enumerate(self.SECTIONS):
+            sec_id = sec_meta[1]
+            sec_title = sec_meta[3]
+            
+            items = self.section_items.get(sec_id, [])
+            for item_idx, item in enumerate(items):
+                if item.item_type == "header":
+                    continue
+                    
+                match = False
+                if not query:
+                    match = True
+                else:
+                    haystack = f"{item.name} {item.desc} {sec_title}".lower()
+                    if query in haystack:
+                        match = True
+                        
+                if match:
+                    self.search_results.append((sec_idx, item_idx, item))
+                    
+        if self.search_selected_idx >= len(self.search_results):
+            self.search_selected_idx = max(0, len(self.search_results) - 1)
+        self.search_scroll_offset = 0
+
+    def _navigate_to_search_result(self, exec_action: bool = False) -> None:
+        """Navega a la sección del resultado seleccionado y opcionalmente edita en línea."""
+        if not self.search_results or not (0 <= self.search_selected_idx < len(self.search_results)):
+            return
+            
+        sec_idx, item_idx, item = self.search_results[self.search_selected_idx]
+        self.search_open = False
+        
+        self.view_mode = "main"
+        self.current_section_idx = sec_idx
+        self.selected_item_idx = item_idx
+        self.active_pane = "content"
+        self.content_scroll_offset = max(0, item_idx - 2)
+        
+        if exec_action:
+            self._activate_current_item()
+        else:
+            self.status_message = f"Resultado: {item.name}"
+
+    def _render_search_overlay(self, cols: int, rows: int) -> List[str]:
+        """Renderiza el modal flotante tipo spotlight del buscador."""
+        self._search_click_map.clear()
+        self._search_box_bounds = (0, 0, 0, 0)
+        
+        mw = min(max(52, 62), cols - 6)
+        mh = min(rows - 6, 22)
+        inner_mw = mw - 2
+        start_x = max(2, (cols - mw) // 2)
+        start_y = max(3, (rows - mh) // 2)
+        self._search_box_bounds = (start_y, start_y + mh - 1, start_x, start_x + mw - 1)
+        
+        overlay: List[str] = []
+        
+        top_line = "┌" + ("─" * inner_mw) + "┐"
+        title = " 󰍉 BUSCAR CONFIGURACIÓN "
+        title_centered = title.ljust(inner_mw, "─")[:inner_mw]
+        overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┌" + title_centered + "┐", bold=True))
+        
+        q_display = self.search_query + "▌"
+        if len(q_display) > inner_mw - 2:
+            q_display = "..." + q_display[-(inner_mw - 5):]
+        q_line = " " + q_display.ljust(inner_mw - 1)
+        overlay.append(f"\033[{start_y + 1};{start_x}H" + self.theme_engine.style("bright_foreground", "background", "┃" + q_line + "│", bold=True))
+        overlay.append(f"\033[{start_y + 2};{start_x}H" + self.theme_engine.style("muted", "background", "├" + ("─" * inner_mw) + "┤"))
+        
+        res_area_h = mh - 5
+        max_visible = res_area_h // 2
+        
+        if self.search_selected_idx < self.search_scroll_offset:
+            self.search_scroll_offset = self.search_selected_idx
+        elif self.search_selected_idx >= self.search_scroll_offset + max_visible:
+            self.search_scroll_offset = self.search_selected_idx - max_visible + 1
+            
+        cur_y = start_y + 3
+        visible_end = min(len(self.search_results), self.search_scroll_offset + max_visible)
+        
+        if not self.search_results:
+            msg = "Sin resultados".center(inner_mw)
+            overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + msg + "│"))
+            overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + (" " * inner_mw) + "│"))
+            cur_y += 2
+        else:
+            for i in range(self.search_scroll_offset, visible_end):
+                sec_idx, item_idx, item = self.search_results[i]
+                sec_title = self.SECTIONS[sec_idx][3]
+                
+                is_hov = (i == getattr(self, "hover_search_idx", None))
+                is_sel = (i == self.search_selected_idx) or is_hov
+                
+                self._search_click_map[cur_y] = i
+                self._search_click_map[cur_y + 1] = i
+                
+                name_w = inner_mw - len(sec_title) - 4
+                if name_w < 5:
+                    name_w = 5
+                
+                n_txt = item.name[:name_w].ljust(name_w)
+                s_txt = sec_title.rjust(inner_mw - name_w - 3)
+                
+                if is_sel:
+                    l1_s = self.theme_engine.style("bright_foreground", "soft_selection", f" ▌ {n_txt}", bold=True) + self.theme_engine.style("muted", "soft_selection", f"{s_txt} ")
+                    l2_s = self.theme_engine.style("foreground", "soft_selection", f"   {item.desc}"[:inner_mw].ljust(inner_mw))
+                else:
+                    l1_s = self.theme_engine.style("bright_foreground", "background", f"   {n_txt}") + self.theme_engine.style("muted", "background", f"{s_txt} ")
+                    l2_s = self.theme_engine.style("muted", "background", f"   {item.desc}"[:inner_mw].ljust(inner_mw))
+                    
+                overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("foreground", "background", "┃") + l1_s + self.theme_engine.style("foreground", "background", "│"))
+                overlay.append(f"\033[{cur_y + 1};{start_x}H" + self.theme_engine.style("foreground", "background", "┃") + l2_s + self.theme_engine.style("foreground", "background", "│"))
+                cur_y += 2
+                
+        while cur_y < start_y + mh - 2:
+            overlay.append(f"\033[{cur_y};{start_x}H" + self.theme_engine.style("muted", "background", "┃" + (" " * inner_mw) + "│"))
+            cur_y += 1
+            
+        overlay.append(f"\033[{start_y + mh - 2};{start_x}H" + self.theme_engine.style("muted", "background", "├" + ("─" * inner_mw) + "┤"))
+        keys_hint = " Enter: Ir │ Espacio/Tab: Editar │ Esc: Cerrar "
+        keys_centered = keys_hint.center(inner_mw)[:inner_mw]
+        overlay.append(f"\033[{start_y + mh - 1};{start_x}H" + self.theme_engine.style("accent", "background", "┗" + keys_centered.replace(" ", "━") + "┙", bold=True))
+        
+        return overlay
+
     def _request_section_change(self, target_idx: int, focus_content: bool = False) -> None:
         """
         Cambia a la sección 'target_idx' de la barra lateral izquierda.
@@ -3949,6 +4102,52 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
             self.context_menu_open = False
             return
 
+        # 0.5 Si el buscador global está abierto
+        if getattr(self, "search_open", False) and not self.modal_state:
+            if ch in (b"\x1b",):
+                self.search_open = False
+                self.search_query = ""
+                self.status_message = "Buscador cerrado."
+                return
+            if ch in (b"\x1b[A", b"k", b"K"):  # Arriba / k
+                self.search_selected_idx = max(0, self.search_selected_idx - 1)
+                return
+            if ch in (b"\x1b[B", b"j", b"J"):  # Abajo / j
+                if self.search_results:
+                    self.search_selected_idx = min(len(self.search_results) - 1, self.search_selected_idx + 1)
+                return
+            if ch == b"\x1b[5~":  # Page Up
+                self.search_selected_idx = max(0, self.search_selected_idx - 5)
+                return
+            if ch == b"\x1b[6~" and self.search_results:  # Page Down
+                self.search_selected_idx = min(len(self.search_results) - 1, self.search_selected_idx + 5)
+                return
+            if ch in (b"\x1b[H", b"\x1b[1~"):  # Home
+                self.search_selected_idx = 0
+                return
+            if ch in (b"\x1b[F", b"\x1b[4~") and self.search_results:  # End
+                self.search_selected_idx = max(0, len(self.search_results) - 1)
+                return
+            if ch in (b"\r", b"\n"):
+                self._navigate_to_search_result(exec_action=False)
+                return
+            if ch in (b" ", b"\t"):
+                self._navigate_to_search_result(exec_action=True)
+                return
+            if ch in (b"\x7f", b"\x08"):  # Backspace
+                self.search_query = self.search_query[:-1]
+                self._perform_global_search()
+                return
+            try:
+                decoded = ch.decode("utf-8", errors="ignore")
+                for c in decoded:
+                    if c.isprintable() and c not in ("\r", "\n", "\t"):
+                        self.search_query += c
+                self._perform_global_search()
+            except Exception:
+                pass
+            return
+
         # 1. Si hay un menú desplegable (dropdown) abierto en el panel principal
         if self.dropdown_open and not self.modal_state:
             if ch in (b"\x1b", b"q", b"Q") and len(ch) == 1:
@@ -4353,6 +4552,11 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
         if ch in (b"m", b"M", b"\x1b[29~") and not self.modal_state and not self.dropdown_open:
             self._open_context_menu_for_current_selection()
             return
+            
+        # Atajo para buscador global (tecla /)
+        if ch == b"/" and not self.modal_state and not getattr(self, "search_open", False) and not self.dropdown_open and not self.context_menu_open:
+            self._open_search()
+            return
 
         # Atajos rápidos físicos directos (a/s/g: Aplicar/Guardar, c: Cancelar, r: Restablecer)
         if ch in (b"a", b"A", b"s", b"S", b"g", b"G"):
@@ -4570,6 +4774,33 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
         cols, rows = shutil.get_terminal_size((84, 42))
         sidebar_w = self._get_sidebar_width(cols)
         active_sections = self._get_active_sections()
+        
+        # -1. Si el buscador global está abierto
+        if getattr(self, "search_open", False) and not self.modal_state:
+            sy1, sy2, sx1, sx2 = self._search_box_bounds
+            if act == b"M" and btn == 35:
+                if sy1 <= y <= sy2 and sx1 <= x <= sx2 and y in self._search_click_map:
+                    self.hover_search_idx = self._search_click_map[y]
+                    self.search_selected_idx = self.hover_search_idx
+                else:
+                    self.hover_search_idx = None
+                return
+            if act == b"M" and btn in (64, 65):
+                if btn == 64:
+                    self.search_selected_idx = max(0, self.search_selected_idx - 1)
+                else:
+                    if self.search_results:
+                        self.search_selected_idx = min(len(self.search_results) - 1, self.search_selected_idx + 1)
+                return
+            if act == b"M" and btn == 0:
+                if sy1 <= y <= sy2 and sx1 <= x <= sx2:
+                    if y in self._search_click_map:
+                        self.search_selected_idx = self._search_click_map[y]
+                        self._navigate_to_search_result(exec_action=False)
+                    return
+                else:
+                    self.search_open = False
+                return
 
         # 0. Si el menú contextual de clic secundario está abierto
         if self.context_menu_open and not self.modal_state:
