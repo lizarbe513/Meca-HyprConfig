@@ -2,7 +2,7 @@
 Interfaz TUI Monolítica para Meca HyprConfig (Estilo HyprMod / GNOME / macOS).
 Arquitectura de 2 paneles (Categorías a la izquierda, Variables de Hyprland y Omarchy a la derecha),
 con soporte completo de ratón, menús desplegables, tarjetas de temas, controles en cuadrados cerrados,
-modales interactivos, gestión de Autostart, Barra Superior y edición de temas de Omarchy.
+modales interactivos, gestión de Autostart y edición de temas de Omarchy.
 """
 
 from __future__ import annotations
@@ -67,7 +67,6 @@ class MecaTUI:
         ("WINDOW MANAGEMENT", "layouts", "󰕮", "Layouts", "Dwindle, Master, Scrolling y grupos"),
         ("WINDOW MANAGEMENT", "rules", "", "Window Rules", "Ventanas flotantes y opacidad"),
         ("STARTUP & EXTRAS", "autostart", "", "Autostart", "Inicio automatico de sesion"),
-        ("STARTUP & EXTRAS", "bar", "󰍜", "Barra Superior", "Posicion, reloj y widgets"),
         ("STARTUP & EXTRAS", "themes", "󰏘", "Temas Omarchy", "Seleccion, edicion y creacion"),
         ("STARTUP & EXTRAS", "omarchy", "󰚰", "Omarchy", "Fondo, barra y luz nocturna"),
     ]
@@ -442,51 +441,6 @@ class MecaTUI:
                 )
             )
         return items
-
-    def _build_bar_section_items(self) -> List[SectionItem]:
-        """Construye los controles de la pestaña Barra Superior de Omarchy."""
-        items = [
-            SectionItem("bar:visible", "Mostrar barra", "Visible en pantalla", "toggle"),
-            SectionItem("bar:position", "Posicion", "Ubicacion en pantalla", "select", options=["top", "bottom", "left", "right"]),
-            SectionItem("bar:transparent", "Fondo transparente", "Superficie sin fondo solido", "toggle"),
-            SectionItem("bar:center_anchor", "Ancla central", "Widget fijo al centro", "select", options=["omarchy.clock", "omarchy.workspaces", "none"]),
-            SectionItem(
-                "bar:clock_format",
-                "Formato del reloj",
-                "Formato de fecha y hora",
-                "select",
-                options=["ddd d MMM h:mm AP", "ddd d MMM HH:mm", "HH:mm", "h:mm AP", "HH:mm:ss"],
-            ),
-            SectionItem(
-                "bar:clock_alt_format",
-                "Formato secundario",
-                "Al hacer clic en el reloj",
-                "select",
-                options=["d MMMM 'W'ww yyyy", "dddd, d MMMM yyyy", "yyyy-MM-dd"],
-            ),
-            SectionItem("bar:idle_screensaver", "Salvapantallas (s)", "Tiempo de inactividad", "stepper", 0, 1800, 30),
-            SectionItem("bar:idle_lock", "Bloqueo (s)", "Tiempo para bloquear sesion", "stepper", 0, 3600, 60),
-            SectionItem("action:reset_bar_defaults", "Restaurar barra", "Diseño original", "action"),
-            SectionItem("action:restart_shell", "Reiniciar barra", "Recargar shell", "action"),
-            SectionItem(
-                "header:bar_widgets",
-                "WIDGETS",
-                "Posicion en la barra",
-                "header",
-            ),
-        ]
-        for w_id, s_key, w_label, _ in ConfigSync.BAR_WIDGETS:
-            items.append(
-                SectionItem(
-                    f"bar_widget:{s_key}",
-                    w_label,
-                    w_id,
-                    "select",
-                    options=["off", "left", "center", "right"],
-                )
-            )
-        return items
-
     def _color_options_for(self, current_hex: str) -> List[str]:
         """Construye la lista de opciones de un selector de color con previsualización y entrada #Hex."""
         base = [str(current_hex), "Escribir #Hex..."]
@@ -814,7 +768,6 @@ class MecaTUI:
                 SectionItem("rules:localsend_float", "LocalSend flotante", "Ventana centrada", "toggle"),
             ],
             "autostart": self._build_autostart_section_items(),
-            "bar": self._build_bar_section_items(),
             "themes": self._build_themes_section_items(),
             "omarchy": [
                 SectionItem("omarchy:theme", "Tema", "Tema del sistema", "select", options=themes),
@@ -1100,8 +1053,6 @@ class MecaTUI:
         else:
             if sec_id == "autostart":
                 self.section_items["autostart"] = self._build_autostart_section_items()
-            elif sec_id == "bar":
-                self.section_items["bar"] = self._build_bar_section_items()
             elif sec_id == "themes":
                 self.section_items["themes"] = self._build_themes_section_items()
             elif sec_id == "keybinds":
@@ -2910,15 +2861,6 @@ class MecaTUI:
         "rules:pip_float": ("rules_pip_float", bool, True),
         "rules:steam_float": ("rules_steam_float", bool, True),
         "rules:localsend_float": ("rules_localsend_float", bool, True),
-        # Barra Superior Omarchy
-        "bar:visible": ("bar_visible", bool, True),
-        "bar:position": ("bar_position", str, "top"),
-        "bar:transparent": ("bar_transparent", bool, False),
-        "bar:center_anchor": ("bar_center_anchor", str, "omarchy.clock"),
-        "bar:clock_format": ("bar_clock_format", str, "ddd d MMM h:mm AP"),
-        "bar:clock_alt_format": ("bar_clock_alt_format", str, "d MMMM 'W'ww yyyy"),
-        "bar:idle_screensaver": ("idle_screensaver", int, 150),
-        "bar:idle_lock": ("idle_lock", int, 300),
         # Temas Omarchy
         "omarchy:theme_mode": ("omarchy_theme_mode", str, "dark"),
         "omarchy:theme_accent": ("omarchy_theme_accent", str, "#E31B23"),
@@ -2944,10 +2886,6 @@ class MecaTUI:
             if 0 <= idx < len(self.autostart_items):
                 return bool(self.autostart_items[idx].get("enabled", False))
             return False
-
-        if key.startswith("bar_widget:"):
-            s_key = key.split(":", 1)[1]
-            return self.settings.get(s_key, "off")
 
         if key == "omarchy:theme":
             return self.settings.get("omarchy_theme_name", self.theme_engine.current_theme)
@@ -5292,12 +5230,6 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
                 self._sync_autostart_into_settings()
             return
 
-        if key.startswith("bar_widget:"):
-            s_key = key.split(":", 1)[1]
-            self.settings[s_key] = str(val)
-            self.status_message = f"Widget '{val}' seleccionado."
-            return
-
         if key == "input:kb_layout":
             self.settings["kb_layout"] = str(val)
             for it in self.section_items.get("devices", []):
@@ -5490,27 +5422,6 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
             self._set_item_value("omarchy:theme", target_slug)
             return
 
-        elif action_key == "action:reset_bar_defaults":
-            if self.config_sync.reset_bar_defaults(self.settings):
-                self.saved_settings = dict(self.settings)
-                self.section_items["bar"] = self._build_bar_section_items()
-                self.status_message = "✓ Barra superior restaurada."
-            else:
-                self.status_message = "Error al restaurar barra."
-            return
-
-        elif action_key == "action:restart_shell":
-            try:
-                subprocess.Popen(
-                    ["omarchy-restart-shell"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                self.status_message = "✓ Reiniciando barra superior..."
-            except Exception:
-                self.status_message = "No se encontró 'omarchy-restart-shell'."
-            return
-
         elif action_key == "action:record_compose":
             self._start_compose_recording()
             return
@@ -5567,8 +5478,6 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                self.settings["bar_visible"] = not bool(self.settings.get("bar_visible", True))
-                self.saved_settings["bar_visible"] = self.settings["bar_visible"]
                 self.status_message = "✓ Barra alternada."
             except Exception:
                 self.status_message = "No se encontró 'omarchy-toggle-bar'."
@@ -5583,13 +5492,6 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
                 self.status_message = "✓ Luz nocturna alternada."
             except Exception:
                 self.status_message = "No se encontró 'omarchy-toggle-nightlight'."
-
-    def _has_bar_changes(self) -> bool:
-        """Verifica si se modificaron opciones de la barra superior de Omarchy."""
-        return any(
-            k.startswith("bar_") and self.settings.get(k) != self.saved_settings.get(k)
-            for k in self.settings
-        )
 
     def save_all(self) -> None:
         """
@@ -5642,9 +5544,6 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
         ok_gui = self.config_sync.save_gui_settings(self.settings, apply_live=True)
         ok_auto = self.config_sync.save_autostart_items(self.autostart_items)
         ok_kb = self.config_sync.save_keybinds(self.keybind_items)
-
-        if self._has_bar_changes():
-            self.config_sync.save_bar_settings(self.settings, reload_shell=True)
 
         if self.settings.get("compose_key") != self.saved_settings.get("compose_key"):
             self.config_sync.fix_caps_lock(compose_key=str(self.settings.get("compose_key", "none")))

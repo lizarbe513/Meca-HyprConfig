@@ -1,8 +1,7 @@
 """
-Módulo de Sincronización y Persistencia de Configuraciones en Archivos Lua de Hyprland
-y Configuración de la Barra Superior de Omarchy (~/.config/omarchy/shell.json).
-Garantiza persistencia completa en hyprland-gui.lua, autostart.lua, input.lua, monitors.lua,
-hyprland.lua y shell.json.
+Módulo de Sincronización y Persistencia de Configuraciones en Archivos Lua de Hyprland.
+Garantiza persistencia completa en hyprland-gui.lua, autostart.lua, input.lua, monitors.lua
+y hyprland.lua.
 """
 
 from __future__ import annotations
@@ -16,29 +15,6 @@ from meca.core.hypr_ipc import HyprIPC
 
 
 class ConfigSync:
-    # Widgets nativos de la barra superior de Omarchy (id, clave en settings, etiqueta, sección por defecto)
-    BAR_WIDGETS = [
-        ("omarchy.menu", "bar_w_menu", "Menú Omarchy (Logo)", "left"),
-        ("omarchy.network", "bar_w_network", "Red / Wi-Fi", "left"),
-        ("omarchy.active-window", "bar_w_active_window", "Título de ventana activa", "off"),
-        ("omarchy.keyboard-layout", "bar_w_keyboard", "Distribución de teclado", "center"),
-        ("omarchy.workspaces", "bar_w_workspaces", "Espacios de trabajo (Workspaces)", "center"),
-        ("omarchy.clock", "bar_w_clock", "Reloj y fecha", "center"),
-        ("omarchy.media", "bar_w_media", "Reproductor multimedia", "off"),
-        ("omarchy.indicators", "bar_w_indicators", "Indicadores de grabación / estado", "center"),
-        ("omarchy.system-update", "bar_w_updates", "Actualizaciones del sistema", "center"),
-        ("omarchy.weather", "bar_w_weather", "Clima (Weather)", "center"),
-        ("omarchy.tray", "bar_w_tray", "Bandeja del sistema (System Tray)", "right"),
-        ("omarchy.agents", "bar_w_agents", "Agentes activos", "right"),
-        ("omarchy.bluetooth", "bar_w_bluetooth", "Bluetooth", "right"),
-        ("omarchy.audio", "bar_w_audio", "Volumen de audio", "right"),
-        ("omarchy.microphone", "bar_w_microphone", "Micrófono", "off"),
-        ("omarchy.monitor", "bar_w_monitor", "Brillo / Pantalla", "right"),
-        ("omarchy.power", "bar_w_power", "Menú de energía / Batería", "right"),
-        ("omarchy.tailscale", "bar_w_tailscale", "Tailscale VPN", "off"),
-        ("omarchy.dropbox", "bar_w_dropbox", "Dropbox", "off"),
-    ]
-
     # Catálogo completo de los atajos del sistema Omarchy/Hyprland (categoría, id, nombre, teclas_vista, teclas_lua, expresion_lua, comando_editable)
     DEFAULT_SYSTEM_KEYBINDS = [
         # APLICACIONES Y WEBAPPS (applications.lua)
@@ -170,15 +146,11 @@ class ConfigSync:
         self.autostart_file = self.hypr_dir / "autostart.lua"
         self.bindings_file = self.hypr_dir / "bindings.lua"
         self.hyprland_file = self.hypr_dir / "hyprland.lua"
-        self.shell_json_file = Path.home() / ".config" / "omarchy" / "shell.json"
-        self.default_shell_json = Path("/usr/share/omarchy/config/omarchy/shell.json")
-        self.bar_off_flag = Path.home() / ".local" / "state" / "omarchy" / "toggles" / "bar-off"
         self.ensure_paths()
 
     def ensure_paths(self) -> None:
         """Crea el directorio de configuración si no existe."""
         self.hypr_dir.mkdir(parents=True, exist_ok=True)
-        self.shell_json_file.parent.mkdir(parents=True, exist_ok=True)
 
     def list_cursor_themes(self) -> List[str]:
         """Descubre los temas de cursor instalados en el sistema y directorio del usuario."""
@@ -327,18 +299,7 @@ class ConfigSync:
             "rules_pip_float": True,
             "rules_steam_float": True,
             "rules_localsend_float": True,
-            # Barra Superior Omarchy
-            "bar_visible": True,
-            "bar_position": "top",
-            "bar_transparent": False,
-            "bar_center_anchor": "omarchy.clock",
-            "bar_clock_format": "ddd d MMM h:mm AP",
-            "bar_clock_alt_format": "d MMMM 'W'ww yyyy",
-            "idle_screensaver": 150,
-            "idle_lock": 300,
         }
-        for _, s_key, _, def_sec in self.BAR_WIDGETS:
-            defaults[s_key] = def_sec
         return defaults
 
     def load_gui_settings(self) -> Dict[str, Any]:
@@ -537,170 +498,7 @@ class ConfigSync:
             settings["monitor_mode"] = f"{w}x{h}@{hz:.2f}Hz"
             settings["monitor_transform"] = int(m0.get("transform", 0) or 0)
 
-        # 8. Cargar ajustes de la barra superior de Omarchy (~/.config/omarchy/shell.json)
-        self.load_bar_settings(settings)
-
         return settings
-
-    # =========================================================================
-    # BARRA SUPERIOR DE OMARCHY (~/.config/omarchy/shell.json)
-    # =========================================================================
-
-    def _read_shell_json_raw(self) -> Dict[str, Any]:
-        target = self.shell_json_file if (self.shell_json_file.exists() and self.shell_json_file.stat().st_size > 0) else self.default_shell_json
-        if target.exists():
-            try:
-                return json.loads(target.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        return {
-            "version": 1,
-            "idle": {"screensaver": 150, "lock": 300},
-            "bar": {
-                "position": "top",
-                "transparent": False,
-                "centerAnchor": "omarchy.clock",
-                "layout": {"left": [], "center": [], "right": []},
-            },
-            "plugins": [],
-        }
-
-    def load_bar_settings(self, settings: Dict[str, Any]) -> None:
-        """Sincroniza el estado de ~/.config/omarchy/shell.json dentro del diccionario settings."""
-        settings["bar_visible"] = not self.bar_off_flag.exists()
-        data = self._read_shell_json_raw()
-        bar = data.get("bar", {}) if isinstance(data.get("bar"), dict) else {}
-        idle = data.get("idle", {}) if isinstance(data.get("idle"), dict) else {}
-
-        settings["bar_position"] = str(bar.get("position", "top"))
-        settings["bar_transparent"] = bool(bar.get("transparent", False))
-        settings["bar_center_anchor"] = str(bar.get("centerAnchor", "omarchy.clock") or "none")
-        settings["idle_screensaver"] = int(idle.get("screensaver", 150))
-        settings["idle_lock"] = int(idle.get("lock", 300))
-
-        layout = bar.get("layout", {}) if isinstance(bar.get("layout"), dict) else {}
-        widget_pos: Dict[str, str] = {}
-        for sec in ("left", "center", "right"):
-            entries = layout.get(sec, [])
-            if isinstance(entries, list):
-                for entry in entries:
-                    w_id = entry.get("id", "") if isinstance(entry, dict) else str(entry)
-                    if w_id:
-                        widget_pos[w_id] = sec
-                    if w_id == "omarchy.clock" and isinstance(entry, dict):
-                        if entry.get("format"):
-                            settings["bar_clock_format"] = str(entry["format"])
-                        if entry.get("formatAlt"):
-                            settings["bar_clock_alt_format"] = str(entry["formatAlt"])
-
-        for w_id, s_key, _, _ in self.BAR_WIDGETS:
-            settings[s_key] = widget_pos.get(w_id, "off")
-
-    def save_bar_settings(self, settings: Dict[str, Any], reload_shell: bool = True) -> bool:
-        """Guarda la configuración de la barra superior en ~/.config/omarchy/shell.json y recarga el shell."""
-        try:
-            # 1. Visibilidad de la barra
-            want_visible = bool(settings.get("bar_visible", True))
-            currently_visible = not self.bar_off_flag.exists()
-            if want_visible != currently_visible:
-                subprocess.run(
-                    ["omarchy-toggle-bar", "on" if want_visible else "off"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=3,
-                )
-
-            # 2. Actualizar estructura de shell.json preservando metadatos personalizados de cada widget
-            data = self._read_shell_json_raw()
-            data["version"] = 1
-            if not isinstance(data.get("idle"), dict):
-                data["idle"] = {}
-            data["idle"]["screensaver"] = int(settings.get("idle_screensaver", 150))
-            data["idle"]["lock"] = int(settings.get("idle_lock", 300))
-
-            if not isinstance(data.get("bar"), dict):
-                data["bar"] = {}
-            bar = data["bar"]
-            bar["position"] = str(settings.get("bar_position", "top"))
-            bar["transparent"] = bool(settings.get("bar_transparent", False))
-            anchor = str(settings.get("bar_center_anchor", "omarchy.clock"))
-            if anchor == "none":
-                bar.pop("centerAnchor", None)
-            else:
-                bar["centerAnchor"] = anchor
-
-            old_layout = bar.get("layout", {}) if isinstance(bar.get("layout"), dict) else {}
-            existing_objs: Dict[str, Dict[str, Any]] = {}
-            old_order: Dict[str, List[str]] = {"left": [], "center": [], "right": []}
-
-            for sec in ("left", "center", "right"):
-                for entry in old_layout.get(sec, []):
-                    if isinstance(entry, dict) and entry.get("id"):
-                        w_id = str(entry["id"])
-                        existing_objs[w_id] = dict(entry)
-                        old_order[sec].append(w_id)
-                    elif isinstance(entry, str):
-                        existing_objs[entry] = {"id": entry}
-                        old_order[sec].append(entry)
-
-            # Actualizar formato del reloj
-            clock_obj = existing_objs.get("omarchy.clock", {"id": "omarchy.clock"})
-            clock_obj["format"] = str(settings.get("bar_clock_format", "ddd d MMM h:mm AP"))
-            clock_obj["formatAlt"] = str(settings.get("bar_clock_alt_format", "d MMMM 'W'ww yyyy"))
-            clock_obj.setdefault("verticalFormat", "HH\n—\nmm")
-            existing_objs["omarchy.clock"] = clock_obj
-
-            known_ids = {w_id for w_id, _, _, _ in self.BAR_WIDGETS}
-            new_layout: Dict[str, List[Dict[str, Any]]] = {"left": [], "center": [], "right": []}
-
-            # Primero conservar el orden relativo de los widgets que ya estaban en esa sección
-            for sec in ("left", "center", "right"):
-                for w_id in old_order[sec]:
-                    if w_id not in known_ids:
-                        # Conservar widgets de plugins de terceros
-                        new_layout[sec].append(existing_objs[w_id])
-                    else:
-                        s_key = next(k for wid, k, _, _ in self.BAR_WIDGETS if wid == w_id)
-                        if settings.get(s_key, "off") == sec:
-                            new_layout[sec].append(existing_objs.get(w_id, {"id": w_id}))
-
-            # Luego agregar los widgets que fueron movidos o activados en esa sección
-            for w_id, s_key, _, _ in self.BAR_WIDGETS:
-                target_sec = str(settings.get(s_key, "off"))
-                if target_sec in ("left", "center", "right"):
-                    if not any(x.get("id") == w_id for x in new_layout[target_sec]):
-                        new_layout[target_sec].append(existing_objs.get(w_id, {"id": w_id}))
-
-            bar["layout"] = new_layout
-            if not isinstance(data.get("plugins"), list):
-                data["plugins"] = []
-
-            self.shell_json_file.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-            if reload_shell:
-                subprocess.run(
-                    ["omarchy-shell", "shell", "reloadConfig"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=3,
-                )
-            return True
-        except Exception:
-            return False
-
-    def reset_bar_defaults(self, settings: Dict[str, Any]) -> bool:
-        """Restaura la barra superior de Omarchy a su diseño original."""
-        try:
-            subprocess.run(
-                ["omarchy-bar", "defaults"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=4,
-            )
-            self.load_bar_settings(settings)
-            return True
-        except Exception:
-            return False
 
     # =========================================================================
     # GESTIÓN DE ATAJOS DE TECLADO DEL SISTEMA (~/.config/hypr/bindings.lua)
@@ -1234,7 +1032,6 @@ hl.animation({{ leaf = "specialWorkspace", enabled = true, speed = {3.0 * spd_mu
                     pass
 
             self._update_hyprland_lua_binding_flags(settings)
-            self.save_bar_settings(settings, reload_shell=apply_live)
 
             if apply_live:
                 HyprIPC.set_keyword("input:kb_options", kb_options_str)
