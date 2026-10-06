@@ -3022,16 +3022,15 @@ class MecaTUI:
         self._search_click_map.clear()
         self._search_box_bounds = (0, 0, 0, 0)
         
-        mw = min(max(52, 62), cols - 6)
+        mw = min(62, cols - 6)
         mh = min(rows - 6, 22)
         inner_mw = mw - 2
         start_x = max(2, (cols - mw) // 2)
         start_y = max(3, (rows - mh) // 2)
         self._search_box_bounds = (start_y, start_y + mh - 1, start_x, start_x + mw - 1)
-        
+
         overlay: List[str] = []
-        
-        top_line = "┌" + ("─" * inner_mw) + "┐"
+
         title = " 󰍉 BUSCAR CONFIGURACIÓN "
         title_centered = title.ljust(inner_mw, "─")[:inner_mw]
         overlay.append(f"\033[{start_y};{start_x}H" + self.theme_engine.style("bright_foreground", "accent", "┌" + title_centered + "┐", bold=True))
@@ -3095,7 +3094,7 @@ class MecaTUI:
         overlay.append(f"\033[{start_y + mh - 2};{start_x}H" + self.theme_engine.style("muted", "background", "├" + ("─" * inner_mw) + "┤"))
         keys_hint = " Enter: Ir │ Espacio/Tab: Editar │ Esc: Cerrar "
         keys_centered = keys_hint.center(inner_mw)[:inner_mw]
-        overlay.append(f"\033[{start_y + mh - 1};{start_x}H" + self.theme_engine.style("accent", "background", "┗" + keys_centered.replace(" ", "━") + "┙", bold=True))
+        overlay.append(f"\033[{start_y + mh - 1};{start_x}H" + self.theme_engine.style("accent", "background", "┗" + keys_centered.replace(" ", "━") + "┛", bold=True))
         
         return overlay
 
@@ -4739,6 +4738,7 @@ hl.dispatch(hl.dsp.submap("meca_comp_rec"))
                 else:
                     self.search_open = False
                 return
+            return
 
         # 0. Si el menú contextual de clic secundario está abierto
         if self.context_menu_open and not self.modal_state:
