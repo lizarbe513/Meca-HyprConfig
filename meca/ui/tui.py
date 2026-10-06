@@ -5628,9 +5628,6 @@ if [[ -d "$REPO_DIR/.git" ]] && command -v git &>/dev/null; then
     echo "[MECA] Comprobando actualizaciones de Meca HyprConfig..."
     git -C "$REPO_DIR" pull --ff-only 2>/dev/null || true
 fi
-if command -v meca &>/dev/null; then
-    meca --fix-caps &>/dev/null || true
-fi
 exit 0
 """
         try:

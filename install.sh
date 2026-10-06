@@ -94,8 +94,7 @@ if [[ -f "$HYPR_LUA" ]] && ! grep -q 'require("hyprland-gui")' "$HYPR_LUA"; then
     echo -e '\n-- HyprMod & Meca managed settings\nrequire("hyprland-gui")' >> "$HYPR_LUA"
 fi
 
-echo "[5/5] Aplicando corrección de tecla Bloq Mayús y preparación Lizarbe ..."
-"$SCRIPT_DIR/bin/meca" --fix-caps
+echo "[5/5] Verificando estado ..."
 "$SCRIPT_DIR/bin/meca" --status
 
 echo ""

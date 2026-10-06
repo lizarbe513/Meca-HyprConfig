@@ -26,13 +26,6 @@ if [[ -d "$SCRIPT_DIR/.git" ]] && command -v git &>/dev/null; then
     git -C "$SCRIPT_DIR" pull --ff-only 2>/dev/null || true
 fi
 
-# Re-asegurar tecla Bloq Mayús liberada
-if command -v meca &>/dev/null; then
-    meca --fix-caps &>/dev/null || true
-elif [[ -x "$SCRIPT_DIR/bin/meca" ]]; then
-    "$SCRIPT_DIR/bin/meca" --fix-caps &>/dev/null || true
-fi
-
 # Re-asegurar entrada en el menú de Omarchy (Setup -> Config)
 MENU_EXT="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 if [[ -f "$MENU_EXT" ]] && ! grep -q '"setup.config.meca"' "$MENU_EXT"; then
