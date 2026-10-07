@@ -5,5 +5,5 @@
 
 # Reglas estéticas del proyecto:
 - Guiarte de la identidad visual del programa redactado y desarrollado en este directorio:
- /home/leonardo/Projects/lizarbe - Planes de negocio/Identidad visual
+ el documento de identidad visual de Lizarbe (planes de negocio).
  

@@ -1,5 +1,12 @@
 # MECA (Meca HyprConfig)
 
+> [!WARNING]
+> **Proyecto retirado.** Meca HyprConfig fue reemplazado por **Escritorio**
+> (`lizarbe-escritorio`, repositorio [Lizarbe-Ajustes](https://github.com/lizarbe513/Lizarbe-Ajustes)),
+> que se instala con el paquete `lizarbe-ajustes` y se actualiza con `omarchy update`.
+> Escritorio importa los ajustes de Meca (`lizarbe-escritorio --migrate-meca`).
+> Este repositorio queda solo como archivo; no recibe cambios.
+
 > Panel TUI moderno, reactivo y ligero para configurar y personalizar **Hyprland** y el ecosistema **Omarchy**.
 
 ---
